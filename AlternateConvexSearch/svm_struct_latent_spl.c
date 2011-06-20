@@ -861,8 +861,7 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   double *cur_slack = NULL;
   double lambda = 1 / C_shannon;
   double mu = 2;
-  double phi_weight, w_weight;
-  
+
   // printf ("C_shannon: %f\nlambda: %f\nmu: %f\n", C_shannon, lambda, mu);
   
   SVECTOR *f;
@@ -900,6 +899,10 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   kparm.coef_const=1;
   strcpy(kparm.custom,"empty");
  
+  //save initial w for use in proximal term
+  double * w_init = (double*)malloc((sm->sizePsi+1)*sizeof(double));
+  memcpy(w_init, sm->w, (sm->sizePsi+1)*sizeof(double));
+  
   iter = 0;
 
   printf("Running structural SVM solver (with subgradient descent): "); fflush(stdout); 
@@ -928,8 +931,9 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
     iter+=1;
     printf("."); fflush(stdout);
 
-    mult_vector_n (sm->w, sm->sizePsi, 1 - lambda / ((lambda + mu)*iter));
+    mult_vector_n (sm->w, sm->sizePsi, 1.0 + prox_weight - lambda / ((lambda + mu)*iter));
     add_vector_ns (sm->w, new_constraint_shannon, 1.0 / ((lambda + mu)*iter));
+    add_mult_vector_nn (sm->w, w_init, sm->sizePsi + 1, -1.0 * sparm->prox_weight);
     free_svector (new_constraint_shannon);
     
     for (i=0; i<m; ++i)
