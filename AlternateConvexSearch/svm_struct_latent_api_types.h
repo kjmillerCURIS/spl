@@ -108,5 +108,5 @@ typedef struct struct_learn_parm {
   int reduced_size;
   int margin_type;
   int using_argmax; // 0 means use expectation, 1 means argmax
+  double prox_weight; //proximal weight used by subgradient_descent()
 } STRUCT_LEARN_PARM;
-

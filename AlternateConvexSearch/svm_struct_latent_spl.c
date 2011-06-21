@@ -900,7 +900,7 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   strcpy(kparm.custom,"empty");
  
   //save initial w for use in proximal term
-  double * w_init = (double*)malloc((sm->sizePsi+1)*sizeof(double));
+  double * w_init = create_nvector(sm->sizePsi);
   memcpy(w_init, sm->w, (sm->sizePsi+1)*sizeof(double));
   
   iter = 0;
@@ -931,9 +931,10 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
     iter+=1;
     printf("."); fflush(stdout);
 
-    mult_vector_n (sm->w, sm->sizePsi, 1.0 + prox_weight - lambda / ((lambda + mu)*iter));
+    mult_vector_n (sm->w, sm->sizePsi, 1.0 - lambda / ((lambda + mu)*iter) - sparm->prox_weight * 1.0 / ((1 + mu * C_shannon)*iter));
     add_vector_ns (sm->w, new_constraint_shannon, 1.0 / ((lambda + mu)*iter));
-    add_mult_vector_nn (sm->w, w_init, sm->sizePsi + 1, -1.0 * sparm->prox_weight);
+    add_mult_vector_nn (sm->w, w_init, sm->sizePsi,  sparm->prox_weight * 1.0 / ((1 + mu * C_shannon)*iter));
+
     free_svector (new_constraint_shannon);
     
     for (i=0; i<m; ++i)
@@ -971,6 +972,7 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   free (correct_expectation_psi);
   free (incorrect_expectation_psi);
   free (expectation_loss);
+  free_nvector (w_init);
 
   return(primal_obj);
 }
@@ -1677,11 +1679,13 @@ int main(int argc, char* argv[]) {
     }
     int initIter;
     for (initIter=0;initIter<2;initIter++) {
-      if(!sparm.optimizer_type)
+      if (sparm.optimizer_type==0) {
         primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
-      else
+      } else if (sparm.optimizer_type==1) {
         primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
-      
+      } else {
+        primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
+      }
       
       if(sparm.init_model_file)
       {
@@ -1946,7 +1950,7 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile,char* mode
   struct_parm->reduced_size = 0;
   struct_parm->init_valid_fraction_pos = 0.0;
   struct_parm->margin_type = 0; // 0 means margin rescaling, 1 means opposite y
-
+  struct_parm->prox_weight = 2.0; //it's assumed that only subgradient_descent() will even use a prox weight
   struct_parm->custom_argc=0;
   /*-------------------------------------------------------------------------------*/
 
@@ -1956,6 +1960,7 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile,char* mode
   for(i=1;(i<argc) && ((argv[i])[0] == '-');i++) {
     switch ((argv[i])[1]) {
     case 'a': i++; struct_parm->svm_c_shannon=atof(argv[i]); break;
+    case 'b': i++; struct_parm->prox_weight=atof(argv[i]); break;
     case 'c': i++; learn_parm->svm_c=atof(argv[i]); break;
     case 'd': i++; kernel_parm->poly_degree=atol(argv[i]); break;
     case 'e': i++; learn_parm->eps=atof(argv[i]); break;
