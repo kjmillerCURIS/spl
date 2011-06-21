@@ -32,7 +32,7 @@
 
 #define ALPHA_THRESHOLD 1E-14
 #define IDLE_ITER 20
-#define CLEANUP_CHECK 25
+#define CLEANUP_CHECK 50
 #define STOP_PREC 1E-2
 #define UPDATE_BOUND 3
 #define MAX_CURRICULUM_ITER 10
@@ -635,10 +635,10 @@ double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C,double 
   new_constraint = find_cutting_plane(ex, fycache, &margin, m, sm, sparm,valid_examples);
   value = margin - sprod_ns(w, new_constraint);
 
-  //  if (C_shannon > 0.0) {
+   if (C_shannon > 0.0) {
     new_constraint_shannon = find_shannon_cutting_plane(ex,correct_expectation_psi,incorrect_expectation_psi,expectation_loss, &margin_shannon, m, sm, sparm,valid_examples);
     value_shannon = margin_shannon - sprod_ns(w, new_constraint_shannon);
-    //}
+   }
 
   // FIXME threshold_shannon                                                                                                                 
   // FIXME: shannon_cutting_plane: on an example-by-example basis, return
@@ -831,10 +831,10 @@ double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C,double 
 
   new_constraint = find_cutting_plane(ex, fycache, &margin, m, sm, sparm,valid_examples);
   value = margin - sprod_ns(w, new_constraint);
-  //if (C_shannon > 0.0) {
+  if (C_shannon > 0.0) {
     new_constraint_shannon = find_shannon_cutting_plane(ex,correct_expectation_psi,incorrect_expectation_psi,expectation_loss,&margin_shannon,m, sm, sparm,valid_examples);
     value_shannon = margin_shannon - sprod_ns(w, new_constraint_shannon);
-    //}
+  }
    if((iter % CLEANUP_CHECK) == 0)
     {
       printf("+"); fflush(stdout);
@@ -850,7 +850,7 @@ double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C,double 
   /* free memory */
   for (j=0;j<size_active;j++) {
     free(G[j]);
-    free_example(dXc[j],0);
+    free_example(dXc[j],1);
   }
  free(G);
  free(dXc);
@@ -1884,7 +1884,7 @@ int resize_cleanup(int size_active, int **ptr_idle, int**ptr_slack_or_shannon, d
       free(G[i]);
       G[i] = G[j];
       G[j] = NULL;
-      free_example(dXc[i],0);
+      free_example(dXc[i],1);
       dXc[i] = dXc[j];
       dXc[j] = NULL;
       if(j == *mv_iter)
@@ -1896,7 +1896,7 @@ int resize_cleanup(int size_active, int **ptr_idle, int**ptr_slack_or_shannon, d
   }
   for (k=i;k<size_active;k++) {
     if (G[k]!=NULL) free(G[k]);
-    if (dXc[k]!=NULL) free_example(dXc[k],0);
+    if (dXc[k]!=NULL) free_example(dXc[k],1);
   }
   *mv_iter = new_mv_iter;
   new_size_active = i;
