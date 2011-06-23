@@ -172,6 +172,8 @@ get_y_h_probs (PATTERN *x, LABEL *y, double **probs, STRUCTMODEL *sm, STRUCT_LEA
     }
   }
 
+  printf("sum = %f\n", sum);
+  
   //and normalize
   for (j = 0; j < sparm->n_classes; ++j) {
     for (k = 0; k < numPositions; ++k) {

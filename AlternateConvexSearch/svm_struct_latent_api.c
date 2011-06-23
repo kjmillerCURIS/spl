@@ -557,6 +557,8 @@ get_y_h_probs (PATTERN *x, LABEL *y, double **probs, STRUCTMODEL *sm, STRUCT_LEA
       probs[0][h] = exp (lossval);
       sum += probs[0][h];
     }
+  
+  //printf("sum = %f\n", sum);
 
   // normalize the probabilities
   for (h=0; h < numPositions; ++h)

@@ -103,6 +103,7 @@ typedef struct struct_learn_parm {
 	int n_classes;
   int margin_type;
   double renyi_exponent;
+  double prox_weight;
 } STRUCT_LEARN_PARM;
 
 #endif

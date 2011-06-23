@@ -112,6 +112,15 @@ double current_shannon_slack_val(EXAMPLE *ex, double **correct_expectation_psi, 
   return margin_shannon - sprod_nn (sm->w, new_constraint_shannon, sm->sizePsi);
 }
 
+double current_prox_obj_contrib(double * w_init, STRUCTMODEL * sm, STRUCT_LEARN_PARM * sparm, double C_shannon) {
+  int i;
+  double prox_dist = 0.0;
+  for (i = 1; i < sm->sizePsi+1; i++) {
+    prox_dist += (sm->w[i] - w_init[i]) * (sm->w[i] - w_init[i]);
+  }
+  return 0.5 * C_shannon * sparm->prox_ratio * prox_dist;
+}
+
 double current_shannon_obj_val(EXAMPLE *ex, SVECTOR *new_constraint_shannon, double margin_shannon, long m, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, double C_shannon) {
   int i;
   double shannon_slack = margin_shannon - sprod_ns (sm->w, new_constraint_shannon);
@@ -353,7 +362,9 @@ SVECTOR* find_shannon_cutting_plane(EXAMPLE *ex, double **correct_expectation_ps
       *margin += expectation_loss[i];
     }
   }
-  
+
+  //printf("%f constraints violated.\n", *margin);
+
   // The cutting plane is a constraint averaged over all examples; divide by num examples
   mult_vector_n (new_constraint, sm->sizePsi, 1/valid_count);
   *margin /= valid_count;
@@ -851,7 +862,7 @@ int check_acs_convergence(int *prev_valid_examples, int *valid_examples, long m)
 
 
 double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, SVECTOR **fycache, EXAMPLE *ex, 
-                           STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
+                           STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, FILE * shannon_obj_file, FILE * prox_contrib_file) {
   long i,j;
   double *alpha;
   SVECTOR *new_constraint_shannon;
@@ -859,8 +870,8 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   double margin_shannon;
   double primal_obj, best_obj, cur_obj;
   double *cur_slack = NULL;
-  double lambda = 1 / C_shannon;
-  double mu = 2;
+  double lambda = 1.0 / C_shannon;
+  double prox_contrib = 0.0;
 
   // printf ("C_shannon: %f\nlambda: %f\nmu: %f\n", C_shannon, lambda, mu);
   
@@ -914,15 +925,19 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   
   for (i=0; i<m; ++i)
   {
-    get_y_h_probs (&ex[i].x, &ex[i].y, probscache[i], sm, sparm);
     get_expectation_psi (&ex[i].x, &ex[i].y, &correct_expectation_psi[i], &incorrect_expectation_psi[i], probscache[i], sm, sparm);
-    //get_expectation_psi (&ex[i].x, &ex[i].y, &correct_expectation_psi[i], &incorrect_expectation_psi[i], probscache[i], sm, sparm);
     expectation_loss[i] = get_expectation_loss (&ex[i].y, probscache[i], sm, sparm);
   }
   new_constraint_shannon = find_shannon_cutting_plane(ex, correct_expectation_psi, incorrect_expectation_psi, expectation_loss, &margin_shannon, m, sm, sparm, valid_examples);
   
   best_obj = current_shannon_obj_val(ex, new_constraint_shannon, margin_shannon, m, sm, sparm, C_shannon);
-  
+
+  prox_contrib = current_prox_obj_contrib(w_init, sm, sparm, C_shannon);
+
+  fprintf(shannon_obj_file, "%f ", best_obj);
+  fprintf(prox_contrib_file, "%f ", prox_contrib);
+
+  best_obj += prox_contrib;
   
   // printf ("Found the following first constraint:\n");
   // print_svec (new_constraint);
@@ -930,16 +945,15 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   while(!stop_crit && iter < MAX_ITER) {
     iter+=1;
     printf("."); fflush(stdout);
-
-    mult_vector_n (sm->w, sm->sizePsi, 1.0 - lambda / ((lambda + mu)*iter) - sparm->prox_weight * 1.0 / ((1 + mu * C_shannon)*iter));
-    add_vector_ns (sm->w, new_constraint_shannon, 1.0 / ((lambda + mu)*iter));
-    add_mult_vector_nn (sm->w, w_init, sm->sizePsi,  sparm->prox_weight * 1.0 / ((1 + mu * C_shannon)*iter));
+    double step_size = 1.0 / ((lambda + sparm->prox_ratio) * iter);
+    mult_vector_n (sm->w, sm->sizePsi, 1.0 - 1.0 / iter); //=mult_vector_n(sm->w, sm->sizePsi, 1.0 - step_size * (lambda + sparm->prox_ratio)
+    add_vector_ns (sm->w, new_constraint_shannon, step_size);
+    add_mult_vector_nn (sm->w, w_init, sm->sizePsi, step_size * sparm->prox_ratio);
 
     free_svector (new_constraint_shannon);
     
     for (i=0; i<m; ++i)
-    {
-      get_y_h_probs (&ex[i].x, &ex[i].y, probscache[i], sm, sparm);
+    { 
       free (correct_expectation_psi[i]);
       free (incorrect_expectation_psi[i]);
       get_expectation_psi (&ex[i].x, &ex[i].y, &correct_expectation_psi[i], &incorrect_expectation_psi[i], probscache[i], sm, sparm);
@@ -948,10 +962,15 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
     new_constraint_shannon = find_shannon_cutting_plane(ex, correct_expectation_psi, incorrect_expectation_psi, expectation_loss, &margin_shannon, m, sm, sparm, valid_examples);
 
     cur_obj = current_shannon_obj_val(ex, new_constraint_shannon, margin_shannon, m, sm, sparm, C_shannon);
-    // printf ("Last objective is: %f\n", best_obj);
-    printf ("Current objective is: %f\n", cur_obj);
-    if (cur_obj < (best_obj - epsilon)) {
-      best_obj = cur_obj;
+
+    prox_contrib = current_prox_obj_contrib(w_init, sm, sparm, C_shannon);
+
+    fprintf(shannon_obj_file, "%f ", cur_obj);
+    fprintf(prox_contrib_file, "%f ", prox_contrib);
+
+    //note: the stop 
+    if (cur_obj + prox_contrib < (best_obj - epsilon)) {
+      best_obj = cur_obj + prox_contrib;
     } else {
       stop_crit = 1;
     }
@@ -1409,7 +1428,7 @@ double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex,
 
 double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, SVECTOR **fycache, EXAMPLE *ex, 
                                STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight, 
-                               double *losses, double *slacks, double *entropies, double *novelties, double *difficulties) {
+                               double *losses, double *slacks, double *entropies, double *novelties, double *difficulties, FILE * shannon_obj_file, FILE * prox_contrib_file) {
 
   long i;
   int iter = 0, converged, nValid;
@@ -1445,9 +1464,11 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
       }
       relaxed_primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples);
     }
-    else if (sparm->optimizer_type == 2)
-      relaxed_primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples);
-    else {
+    else if (sparm->optimizer_type == 2) {
+      relaxed_primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples, shannon_obj_file, prox_contrib_file);
+      fprintf(shannon_obj_file, "\n");
+      fprintf(prox_contrib_file, "\n");
+    } else {
       for (i=0;i<sm->sizePsi+1;i++) {
         w[i] = 0.0;
       }
@@ -1622,6 +1643,14 @@ int main(int argc, char* argv[]) {
   ex = sample.examples;
   m = sample.n;
   
+
+  char shannon_obj_filename[1024];
+  char prox_contrib_filename[1024];
+  sprintf(shannon_obj_filename, "shannon_objs_C%f", sparm.prox_ratio);
+  sprintf(prox_contrib_filename, "prox_contribs_C%f", sparm.prox_ratio);
+  FILE * shannon_obj_file = fopen(shannon_obj_filename, "w");
+  FILE * prox_contrib_file = fopen(prox_contrib_filename, "w");
+
   /* initialization */
   init_struct_model(alldata,&sm,&sparm,&learn_parm,&kernel_parm); 
 
@@ -1684,7 +1713,7 @@ int main(int argc, char* argv[]) {
       } else if (sparm.optimizer_type==1) {
         primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
       } else {
-        primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
+        primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples, shannon_obj_file, prox_contrib_file);
       }
       
       if(sparm.init_model_file)
@@ -1765,7 +1794,7 @@ int main(int argc, char* argv[]) {
     /* cutting plane algorithm */
     //primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples);
     /* solve biconvex self-paced learning problem */
-    primal_obj = alternate_convex_search(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples, spl_weight, losses, slacks, entropies, novelties, difficulties);
+    primal_obj = alternate_convex_search(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples, spl_weight, losses, slacks, entropies, novelties, difficulties, shannon_obj_file, prox_contrib_file);
     int nValid = 0;
     for (i=0;i<m;i++) {
       fprintf(fexamples,"%d ",valid_examples[i]);
@@ -1882,6 +1911,8 @@ int main(int argc, char* argv[]) {
   fclose(fdifficulty);
   fclose(floss);
   fclose(fprobs);
+  fclose(shannon_obj_file);
+  fclose(prox_contrib_file);
   // fclose(ffycache);
   free(slacks);
   free(entropies);
@@ -1950,7 +1981,7 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile,char* mode
   struct_parm->reduced_size = 0;
   struct_parm->init_valid_fraction_pos = 0.0;
   struct_parm->margin_type = 0; // 0 means margin rescaling, 1 means opposite y
-  struct_parm->prox_weight = 2.0; //it's assumed that only subgradient_descent() will even use a prox weight
+  struct_parm->prox_ratio = 1.0; //it's assumed that only subgradient_descent() will even use a prox weight
   struct_parm->custom_argc=0;
   /*-------------------------------------------------------------------------------*/
 
@@ -1960,7 +1991,7 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile,char* mode
   for(i=1;(i<argc) && ((argv[i])[0] == '-');i++) {
     switch ((argv[i])[1]) {
     case 'a': i++; struct_parm->svm_c_shannon=atof(argv[i]); break;
-    case 'b': i++; struct_parm->prox_weight=atof(argv[i]); break;
+    case 'b': i++; struct_parm->prox_ratio=atof(argv[i]); break;
     case 'c': i++; learn_parm->svm_c=atof(argv[i]); break;
     case 'd': i++; kernel_parm->poly_degree=atol(argv[i]); break;
     case 'e': i++; learn_parm->eps=atof(argv[i]); break;

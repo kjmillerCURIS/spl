@@ -118,6 +118,26 @@ void find_most_violated_constraint(EXAMPLE *ex, LABEL *ybar, LATENT_VAR *hbar, S
   }
 }
 
+
+
+
+/*ported over from motif*/
+double current_shannon_obj_val(EXAMPLE *ex, SVECTOR *new_constraint_shannon, double margin_shannon, long m, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, double C_shannon) {
+  int i;
+  double shannon_slack = margin_shannon - sprod_ns (sm->w, new_constraint_shannon);
+
+  double norm_w = 0.0;
+  for(i = 1; i < sm->sizePsi+1; i++)
+    norm_w += sm->w[i]*sm->w[i];
+
+  return 0.5*norm_w + C_shannon*shannon_slack;
+}
+
+
+
+
+
+
 /*ported over from motif*/
 double current_obj_val(EXAMPLE *ex, double ***probscache, SVECTOR **fycache, long m, STRUCTMODEL *sm,STRUCT_LEARN_PARM *sparm, double C, double C_shannon, int *valid_examples) {
 
@@ -471,6 +491,139 @@ long *randperm(long m, long n)
   free(map);
   return perm;
 }
+
+
+
+
+
+
+double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, SVECTOR **fycache, EXAMPLE *ex,
+                           STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
+  long i,j;
+  double *alpha;
+  SVECTOR *new_constraint_shannon;
+  int iter, stop_crit = 0;
+  double margin_shannon;
+  double primal_obj, best_obj, cur_obj;
+  double *cur_slack = NULL;
+  double lambda = 1 / C_shannon;
+  double mu = 2;
+
+  printf ("C_shannon: %f\nlambda: %f\nmu: %f\n", C_shannon, lambda, mu);
+
+  SVECTOR *f;
+
+  /* set parameters for hideo solver */
+  LEARN_PARM lparm;
+  KERNEL_PARM kparm;
+  MODEL *svm_model=NULL;
+  lparm.biased_hyperplane = 0;
+  lparm.epsilon_crit = MIN(epsilon,0.001);
+  lparm.svm_c = C;
+  lparm.sharedslack = 1;
+  kparm.kernel_type = LINEAR;
+
+  lparm.remove_inconsistent=0;
+  lparm.skip_final_opt_check=0;
+  lparm.svm_maxqpsize=10;
+  lparm.svm_newvarsinqp=0;
+  lparm.svm_iter_to_shrink=-9999;
+  lparm.maxiter=100000;
+  lparm.kernel_cache_size=40;
+  lparm.eps = epsilon;
+  lparm.transduction_posratio=-1.0;
+  lparm.svm_costratio=1.0;
+  lparm.svm_costratio_unlab=1.0;
+  lparm.svm_unlabbound=1E-5;
+  lparm.epsilon_a=1E-10;  /* changed from 1e-15 */
+  lparm.compute_loo=0;
+  lparm.rho=1.0;
+  lparm.xa_depth=0;
+  strcpy(lparm.alphafile,"");
+  kparm.poly_degree=3;
+  kparm.rbf_gamma=1.0;
+  kparm.coef_lin=1;
+  kparm.coef_const=1;
+  strcpy(kparm.custom,"empty");
+
+  //save initial w for use in proximal term
+  double * w_init = create_nvector(sm->sizePsi);
+  memcpy(w_init, sm->w, (sm->sizePsi+1)*sizeof(double));
+
+  iter = 0;
+
+  printf("Running structural SVM solver (with subgradient descent): "); fflush(stdout);
+
+  double **correct_expectation_psi, **incorrect_expectation_psi, *expectation_loss;
+  correct_expectation_psi = (double **) malloc (m * sizeof (double *));
+  incorrect_expectation_psi = (double **) malloc (m * sizeof (double *));
+  expectation_loss = (double *) calloc (m, sizeof (double));
+
+  for (i=0; i<m; ++i)
+    {
+      get_y_h_probs (&ex[i].x, &ex[i].y, probscache[i], sm, sparm);
+      get_expectation_psi (&ex[i].x, &ex[i].y, &correct_expectation_psi[i], &incorrect_expectation_psi[i], probscache[i], sm, sparm);
+      //get_expectation_psi (&ex[i].x, &ex[i].y, &correct_expectation_psi[i], &incorrect_expectation_psi[i], probscache[i], sm, sparm);
+      expectation_loss[i] = get_expectation_loss (&ex[i].y, probscache[i], sm, sparm);
+    }
+  new_constraint_shannon = find_shannon_cutting_plane(ex, correct_expectation_psi, incorrect_expectation_psi, expectation_loss, &margin_shannon, m, sm, sparm, valid_examples);
+
+  best_obj = current_shannon_obj_val(ex, new_constraint_shannon, margin_shannon, m, sm, sparm, C_shannon);
+
+
+  // printf ("Found the following first constraint:\n");
+  // print_svec (new_constraint);
+
+  while(!stop_crit && iter < MAX_ITER) {
+      iter+=1;
+      printf("."); fflush(stdout);
+
+      mult_vector_n (sm->w, sm->sizePsi, 1.0 - lambda / ((lambda + mu)*iter) - sparm->prox_weight * 1.0 / ((1 + mu * C_shannon)*iter));
+      add_vector_ns (sm->w, new_constraint_shannon, 1.0 / ((lambda + mu)*iter));
+      add_mult_vector_nn (sm->w, w_init, sm->sizePsi,  sparm->prox_weight * 1.0 / ((1 + mu * C_shannon)*iter));
+
+      free_svector (new_constraint_shannon);
+
+      for (i=0; i<m; ++i)
+	{
+	  get_y_h_probs (&ex[i].x, &ex[i].y, probscache[i], sm, sparm);
+	  free (correct_expectation_psi[i]);
+	  free (incorrect_expectation_psi[i]);
+	  get_expectation_psi (&ex[i].x, &ex[i].y, &correct_expectation_psi[i], &incorrect_expectation_psi[i], probscache[i], sm, sparm);
+	  expectation_loss[i] = get_expectation_loss (&ex[i].y, probscache[i], sm, sparm);
+	}
+      new_constraint_shannon = find_shannon_cutting_plane(ex, correct_expectation_psi, incorrect_expectation_psi, expectation_loss, &margin_shannon, m, sm, sparm, valid_examples);
+
+      cur_obj = current_shannon_obj_val(ex, new_constraint_shannon, margin_shannon, m, sm, sparm, C_shannon);
+      // printf ("Last objective is: %f\n", best_obj);
+      printf ("Current objective is: %f\n", cur_obj);
+      if (cur_obj < (best_obj - epsilon)) {
+	 best_obj = cur_obj;
+      } else {
+	 stop_crit = 1;
+      }
+
+  } // end cutting plane while loop
+
+  primal_obj = current_obj_val(ex, probscache, fycache, m, sm, sparm, C, C_shannon, valid_examples);
+
+  printf(" Inner loop optimization finished.\n"); fflush(stdout);
+
+  /* free memory */
+  free_svector (new_constraint_shannon);
+  if (svm_model!=NULL) free_model(svm_model,0);
+  for (i=0; i<m; ++i) {
+    free (correct_expectation_psi[i]);
+    free (incorrect_expectation_psi[i]);
+  }
+  free (correct_expectation_psi);
+  free (incorrect_expectation_psi);
+  free (expectation_loss);
+  free_nvector (w_init);
+
+  return(primal_obj);
+}
+
 
 /* stochastic subgradient descent for solving the convex structural SVM problem */
 double stochastic_subgradient_descent(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, 
@@ -1369,13 +1522,19 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
 		if(converged) {
 			break;
 		}
-		for (i=0;i<sm->sizePsi+1;i++)
-			w[i] = 0.0;
-		if(!sparm->optimizer_type) {
+		
+		if (sparm->optimizer_type != 2) {
+	          for (i=0;i<sm->sizePsi+1;i++) {
+		    w[i] = 0.0;
+		  }
+		}
+		if (sparm->optimizer_type==0) {
 		  relaxed_primal_obj = cutting_plane_algorithm(w, m,MAX_ITER,C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples);
-		} else {
+		} else if (sparm->optimizer_type==1) {
 		  assert(0); /*Changes to stochastic_subgradient_descent() weren't ported over from motif; we don't expect you to use stochastic_subgradient_descent()*/
 			relaxed_primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, epsilon, fycache, ex, sm, sparm, valid_examples);
+		} else {
+		  relaxed_primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples);
 		}
 		if(nValid < m)
 			relaxed_primal_obj += (double)(m-nValid)/((double)spl_weight);
@@ -1583,11 +1742,13 @@ int main(int argc, char* argv[]) {
 		}
 		int initIter;
 		for (initIter=0;initIter<2;initIter++) {
-		  if(!sparm.optimizer_type) {
-				primal_obj = cutting_plane_algorithm(w, m,MAX_ITER,C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
-		  } else {
+		  if (sparm.optimizer_type==0) {
+		       primal_obj = cutting_plane_algorithm(w, m,MAX_ITER,C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
+		  } else if (sparm.optimizer_type==1) {
 		      assert(0);
 		      primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples);
+		  } else {
+		    primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
 		  }
 		  for (i=0;i<m;i++) {
    	 		free_latent_var(ex[i].h);
@@ -1701,6 +1862,7 @@ int main(int argc, char* argv[]) {
       free_svector(fy);
       fy = diff;
       fycache[i] = fy;
+      get_y_h_probs (&ex[i].x, &ex[i].y, probscache[i], &sm, &sparm);
     }
 		sprintf(itermodelfile,"%s.%04d",modelfile,outer_iter);
 		write_struct_model(itermodelfile, &sm, &sparm);
@@ -1765,7 +1927,6 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile, char* mod
 	char filestub[1024];
 
   /* set default */
-  learn_parm->maxiter=20000;
   learn_parm->svm_maxqpsize=100;
   learn_parm->svm_c=100.0;
   struct_parm->svm_c_shannon = 0.0; /* Constant for the shannon slack in the objective */
@@ -1784,12 +1945,16 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile, char* mod
 	struct_parm->init_valid_fraction = 0.5;
 	struct_parm->margin_type = 0;
 	struct_parm->renyi_exponent = -1.0; // see get_example_scores for what this means
-
+	struct_parm->prox_weight = 2.0; //it's assumed that only subgradient_descent() will even use a prox weight
   struct_parm->custom_argc=0;
+
+  int maxiter_specified = 0; //flag to indicate whether the user has specified a value for learn_parm->maxiter
+  //this flag is necessary because the default value of maxiter depends on the optimizer type
 
   for(i=1;(i<argc) && ((argv[i])[0] == '-');i++) {
     switch ((argv[i])[1]) {
     case 'a': i++; struct_parm->svm_c_shannon=atof(argv[i]); break;
+    case 'b': i++; struct_parm->prox_weight=atof(argv[i]); break;
     case 'c': i++; learn_parm->svm_c=atof(argv[i]); break;
     case 'e': i++; learn_parm->eps=atof(argv[i]); break;
     case 's': i++; learn_parm->svm_maxqpsize=atol(argv[i]); break; 
@@ -1798,7 +1963,7 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile, char* mod
     case 'r': i++; learn_parm->biased_hyperplane=atol(argv[i]); break; 
     case 't': i++; kernel_parm->kernel_type=atol(argv[i]); break;
     case 'x': i++; struct_parm->renyi_exponent=atof(argv[i]); break;
-    case 'n': i++; learn_parm->maxiter=atol(argv[i]); break;
+    case 'n': i++; learn_parm->maxiter=atol(argv[i]); maxiter_specified = 1; break;
     case 'p': i++; learn_parm->remove_inconsistent=atol(argv[i]); break; 
 		case 'k': i++; *init_spl_weight = atof(argv[i]); break;
 		case 'm': i++; *spl_factor = atof(argv[i]); break;
@@ -1810,6 +1975,18 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile, char* mod
     }
 
   }
+
+  /*unlike other optimization algorithms, our (non-stochastic) subgradient descent
+  algorithm is intentionally run for a limited number of iterations and in
+  most cases should be cut off before it reaches a zero-subgradient*/
+  if (!maxiter_specified) {
+    if (struct_parm->optimizer_type==2) {
+      learn_parm->maxiter=20;
+    } else {
+      learn_parm->maxiter=20000;
+    }
+  }
+
   *init_spl_weight = (*init_spl_weight) / (learn_parm->svm_c + struct_parm->svm_c_shannon);
 
   if(i>=argc) {
