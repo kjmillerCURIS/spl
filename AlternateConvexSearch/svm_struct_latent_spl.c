@@ -861,14 +861,14 @@ int check_acs_convergence(int *prev_valid_examples, int *valid_examples, long m)
 }
 
 
-double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, SVECTOR **fycache, EXAMPLE *ex, 
-                           STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, FILE * shannon_obj_file, FILE * prox_contrib_file) {
+double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, double ***true_probscache, SVECTOR **fycache, EXAMPLE *ex, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, FILE * shannon_obj_file, FILE * prox_contrib_file, FILE * true_obj_file) {
   long i,j;
   double *alpha;
   SVECTOR *new_constraint_shannon;
+  SVECTOR *true_new_constraint_shannon;
   int iter, stop_crit = 0;
   double margin_shannon;
-  double primal_obj, best_obj, cur_obj;
+  double primal_obj, best_obj, cur_obj, true_obj;
   double *cur_slack = NULL;
   double lambda = 1.0 / C_shannon;
   double prox_contrib = 0.0;
@@ -922,6 +922,14 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
   correct_expectation_psi = (double **) malloc (m * sizeof (double *));
   incorrect_expectation_psi = (double **) malloc (m * sizeof (double *));
   expectation_loss = (double *) calloc (m, sizeof (double));
+
+
+  double **true_correct_expectation_psi, **true_incorrect_expectation_psi, *true_expectation_loss;
+  true_correct_expectation_psi = (double **) malloc (m * sizeof (double *));
+  true_incorrect_expectation_psi = (double **) malloc (m * sizeof (double *));
+  true_expectation_loss = (double *) calloc (m, sizeof (double));
+  double true_margin_shannon;
+  
   
   for (i=0; i<m; ++i)
   {
@@ -934,8 +942,11 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
 
   prox_contrib = current_prox_obj_contrib(w_init, sm, sparm, C_shannon);
 
+  true_obj = best_obj;
+
   fprintf(shannon_obj_file, "%f ", best_obj);
   fprintf(prox_contrib_file, "%f ", prox_contrib);
+  fprintf(true_obj_file, "%f ", true_obj);
 
   best_obj += prox_contrib;
   
@@ -946,7 +957,7 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
     iter+=1;
     printf("."); fflush(stdout);
     double step_size = 1.0 / ((lambda + sparm->prox_ratio) * iter);
-    mult_vector_n (sm->w, sm->sizePsi, 1.0 - 1.0 / iter); //=mult_vector_n(sm->w, sm->sizePsi, 1.0 - step_size * (lambda + sparm->prox_ratio)
+    mult_vector_n (sm->w, sm->sizePsi, 1.0 - 1.0 / iter);
     add_vector_ns (sm->w, new_constraint_shannon, step_size);
     add_mult_vector_nn (sm->w, w_init, sm->sizePsi, step_size * sparm->prox_ratio);
 
@@ -965,14 +976,34 @@ double subgradient_descent(double *w, long m, int MAX_ITER, double C, double C_s
 
     prox_contrib = current_prox_obj_contrib(w_init, sm, sparm, C_shannon);
 
-    fprintf(shannon_obj_file, "%f ", cur_obj);
-    fprintf(prox_contrib_file, "%f ", prox_contrib);
-
+    int iter_mod_hundred = iter / 100;
+    iter_mod_hundred *= 100;
+    iter_mod_hundred = iter - iter_mod_hundred;
+    if (iter_mod_hundred  == 0) {
+      printf("*"); fflush(stdout);
+      for (i=0; i<m; ++i)
+	{
+	  get_y_h_probs (&(ex[i].x), &(ex[i].y), true_probscache[i], sm, sparm);
+	  get_expectation_psi (&ex[i].x, &ex[i].y, &true_correct_expectation_psi[i], &true_incorrect_expectation_psi[i], true_probscache[i], sm, sparm);
+	  true_expectation_loss[i] = get_expectation_loss (&ex[i].y, true_probscache[i], sm, sparm);
+	}
+      true_new_constraint_shannon = find_shannon_cutting_plane(ex, true_correct_expectation_psi, true_incorrect_expectation_psi, true_expectation_loss, &true_margin_shannon, m, sm, sparm, valid_examples);
+      true_obj = current_shannon_obj_val(ex, true_new_constraint_shannon, true_margin_shannon, m, sm, sparm, C_shannon);
+      fprintf(shannon_obj_file, "%f ", cur_obj);
+      fprintf(prox_contrib_file, "%f ", prox_contrib);
+      fprintf(true_obj_file, "%f ", true_obj);
+      free_svector(true_new_constraint_shannon);
+     
+      for (i=0; i<m; ++i) {
+	free(true_correct_expectation_psi[i]);
+	free(true_incorrect_expectation_psi[i]);
+      }
+    }
     //note: the stop 
     if (cur_obj + prox_contrib < (best_obj - epsilon)) {
       best_obj = cur_obj + prox_contrib;
     } else {
-      stop_crit = 1;
+      //stop_crit = 1;
     }
 
   } // end cutting plane while loop 
@@ -1426,9 +1457,7 @@ double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex,
   return(init_spl_weight);
 }
 
-double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, SVECTOR **fycache, EXAMPLE *ex, 
-                               STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight, 
-                               double *losses, double *slacks, double *entropies, double *novelties, double *difficulties, FILE * shannon_obj_file, FILE * prox_contrib_file) {
+double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double C_shannon, double epsilon, double ***probscache, double ***true_probscache, SVECTOR **fycache, EXAMPLE *ex, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight, double *losses, double *slacks, double *entropies, double *novelties, double *difficulties, FILE * shannon_obj_file, FILE * prox_contrib_file, FILE * true_obj_file) {
 
   long i;
   int iter = 0, converged, nValid;
@@ -1465,7 +1494,7 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
       relaxed_primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples);
     }
     else if (sparm->optimizer_type == 2) {
-      relaxed_primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, sm, sparm, valid_examples, shannon_obj_file, prox_contrib_file);
+      relaxed_primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, true_probscache, fycache, ex, sm, sparm, valid_examples, shannon_obj_file, prox_contrib_file, true_obj_file);
       fprintf(shannon_obj_file, "\n");
       fprintf(prox_contrib_file, "\n");
     } else {
@@ -1599,9 +1628,10 @@ int main(int argc, char* argv[]) {
   SAMPLE val;
   STRUCT_LEARN_PARM sparm;
   STRUCTMODEL sm;
-  
+
   double ***probscache; // [example ind][label ind][hidden var ind]
-  
+  double ***true_probscache;
+
   double decrement;
   double primal_obj, last_primal_obj, best_primal_obj = DBL_MAX;
   double stop_crit; 
@@ -1614,11 +1644,10 @@ int main(int argc, char* argv[]) {
   double spl_weight;
   double spl_factor;
   int *valid_examples;
-     
+
   double *slacks, *entropies, *novelties, *losses, *difficulties;
   /* read input parameters */
-  my_read_input_parameters(argc, argv, trainfile, modelfile, examplesfile, timefile, latentfile, slackfile, uncertaintyfile, noveltyfile, lossfile, fycachefile, difficultyfile, probsfile,
-                      &learn_parm, &kernel_parm, &sparm, &init_spl_weight, &spl_factor); 
+  my_read_input_parameters(argc, argv, trainfile, modelfile, examplesfile, timefile, latentfile, slackfile, uncertaintyfile, noveltyfile, lossfile, fycachefile, difficultyfile, probsfile, &learn_parm, &kernel_parm, &sparm, &init_spl_weight, &spl_factor); 
 
   epsilon = learn_parm.eps;
   C = learn_parm.svm_c;
@@ -1646,10 +1675,13 @@ int main(int argc, char* argv[]) {
 
   char shannon_obj_filename[1024];
   char prox_contrib_filename[1024];
+  char true_obj_filename[1024];
   sprintf(shannon_obj_filename, "shannon_objs_C%f", sparm.prox_ratio);
   sprintf(prox_contrib_filename, "prox_contribs_C%f", sparm.prox_ratio);
+  sprintf(true_obj_filename, "true_objs_C%f", sparm.prox_ratio);
   FILE * shannon_obj_file = fopen(shannon_obj_filename, "w");
   FILE * prox_contrib_file = fopen(prox_contrib_filename, "w");
+  FILE * true_obj_file = fopen(true_obj_filename, "w");
 
   /* initialization */
   init_struct_model(alldata,&sm,&sparm,&learn_parm,&kernel_parm); 
@@ -1687,6 +1719,7 @@ int main(int argc, char* argv[]) {
   /* prepare feature vector cache and probabilities for correct labels with imputed latent variables */
   fycache = (SVECTOR**)malloc(m*sizeof(SVECTOR*));
   probscache = init_y_h_probs (&sample, &sm, &sparm);
+  true_probscache = init_y_h_probs (&sample, &sm, &sparm);
   for (i=0;i<m;i++) {
     cache_all_psis (&ex[i].x, &sm, &sparm);
     fy = psi(ex[i].x, ex[i].y, ex[i].h, &sm, &sparm);
@@ -1713,7 +1746,8 @@ int main(int argc, char* argv[]) {
       } else if (sparm.optimizer_type==1) {
         primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
       } else {
-        primal_obj = subgradient_descent(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples, shannon_obj_file, prox_contrib_file);
+	//move all the C weight to the alpha=infinity side
+	primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C + C_shannon, 0.0, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples);
       }
       
       if(sparm.init_model_file)
@@ -1786,6 +1820,11 @@ int main(int argc, char* argv[]) {
 
   spl_weight = init_spl_weight;
   while ((outer_iter<2)||((!stop_crit)&&(outer_iter<MAX_OUTER_ITER))) { 
+
+    /*---TEMPORARY!!!---*/
+    if (outer_iter) break;
+    /*------------------*/
+
     if(!outer_iter && init_spl_weight) {
       spl_weight = get_init_spl_weight(m, C, fycache, ex, &sm, &sparm);
       printf("Setting initial spl weight to %f\n",spl_weight);
@@ -1794,7 +1833,7 @@ int main(int argc, char* argv[]) {
     /* cutting plane algorithm */
     //primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples);
     /* solve biconvex self-paced learning problem */
-    primal_obj = alternate_convex_search(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, fycache, ex, &sm, &sparm, valid_examples, spl_weight, losses, slacks, entropies, novelties, difficulties, shannon_obj_file, prox_contrib_file);
+    primal_obj = alternate_convex_search(w, m, MAX_ITER, C, C_shannon, epsilon, probscache, true_probscache, fycache, ex, &sm, &sparm, valid_examples, spl_weight, losses, slacks, entropies, novelties, difficulties, shannon_obj_file, prox_contrib_file, true_obj_file);
     int nValid = 0;
     for (i=0;i<m;i++) {
       fprintf(fexamples,"%d ",valid_examples[i]);
@@ -1913,6 +1952,7 @@ int main(int argc, char* argv[]) {
   fclose(fprobs);
   fclose(shannon_obj_file);
   fclose(prox_contrib_file);
+  fclose(true_obj_file);
   // fclose(ffycache);
   free(slacks);
   free(entropies);
