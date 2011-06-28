@@ -21,6 +21,7 @@
 #include "./SFMT-src-1.3.3/SFMT.h"
 
 #define MAX_INPUT_LINE_LENGTH 10000
+#define DELTA 1
 
 SAMPLE read_struct_examples(char *file, STRUCT_LEARN_PARM *sparm) {
 /*
@@ -168,6 +169,18 @@ SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, STRUCTMODEL *sm, STRUCT_LEARN_PAR
   return(fvec);
 }
 
+double compute_w_T_psi(PATTERN *x, int position_x, int position_y, int class, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+  int i;
+  double score = 0.0;
+
+  double * hog = x->hog[position_x][position_y];
+  for(i = 0; i < sparm->size_hog; i++) {
+    score += sm->w[class*sparm->size_hog+i+1]*hog[i];
+  }
+  return score;
+}
+
+
 void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Makes prediction with input pattern x with weight vector in sm->w,
@@ -214,13 +227,7 @@ void initialize_most_violated_constraint_search(PATTERN x, LATENT_VAR hstar, LAB
   hbar->position_x = hstar.position_x;
   hbar->position_y = hstar.position_y;
   ybar->label = y.label;
-  double * hog = x.hog[hbar->position_x][hbar->position_y];
-  double score = 0.0;
-  int i;
-  for (i = 0; i < sparm->size_hog; i++) {
-    score += sm->w[ybar->label * sparm->size_hog + i + 1] * hog[i];
-  }
-  *max_score = score;
+  *max_score = compute_w_T_psi(&x, hbar->position_x, hbar->position_y, ybar->label, sm, sparm);
 }
 
 void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
@@ -231,12 +238,10 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
   pointers *ybar and *hbar. 
 */
   
-	int i;
 	int width = x.width;
 	int height = x.height;
 	int cur_class, cur_position_x, cur_position_y;
 	double max_score,score;
-	double *hog;
 	FILE	*fp;
 	
 	//make explicit the idea that (y, hstar) is what's returned if the constraint is not violated
@@ -244,14 +249,8 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 	
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
-
-			hog = x.hog[cur_position_x][cur_position_y];
-
 			for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
-				score = 0;
-				for(i = 0; i < sparm->size_hog; i++) {
-					score += sm->w[cur_class*sparm->size_hog+i+1]*hog[i];
-				}
+			  score = compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, sm, sparm);
 				if(cur_class != y.label)
 					score += 1;
 				if(score > max_score) {
@@ -268,6 +267,38 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 	return;
 
 }
+
+void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+
+  int width = x.width;
+  int height = x.height;
+  int cur_class, cur_position_x, cur_position_y;
+  double max_score,score;
+  FILE    *fp;
+
+  //make explicit the idea that (y, hstar) is what's returned if the constraint is not violated
+  initialize_most_violated_constraint_search(x, hstar, y, ybar, hbar, &max_score, sm, sparm);
+
+  for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
+    for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
+      for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
+	if (cur_class != y.label) {
+	  score = DELTA + compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, sm, sparm);
+	  if (score > max_score) {
+	    max_score = score;
+	    ybar->label = cur_class;
+	    hbar->position_x = cur_position_x;
+	    hbar->position_y = cur_position_y;
+	  }
+	}
+      }
+    }
+  }
+
+  return;
+
+}
+
 
 LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
@@ -446,6 +477,7 @@ void parse_struct_parameters(STRUCT_LEARN_PARM *sparm) {
       case 's': i++; sparm->rng_seed = atoi(sparm->custom_argv[i]); break;
       case 'h': i++; sparm->size_hog = atoi(sparm->custom_argv[i]); break;
       case 'n': i++; sparm->n_classes = atoi(sparm->custom_argv[i]); break;
+      case 't': i++; sparm->margin_type = atoi(sparm->custom_argv[i]); break;
       default: printf("\nUnrecognized option %s!\n\n", sparm->custom_argv[i]); exit(0);
     }
   }

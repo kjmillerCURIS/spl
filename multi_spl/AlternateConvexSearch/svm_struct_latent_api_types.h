@@ -92,6 +92,7 @@ typedef struct struct_learn_parm {
   /* add your own variables */
 	double init_valid_fraction;
 	int optimizer_type;
+        int margin_type;
 	int rng_seed;
 	int size_hog;
 	int n_classes;
