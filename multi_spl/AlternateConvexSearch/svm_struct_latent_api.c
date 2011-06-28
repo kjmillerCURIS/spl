@@ -210,7 +210,20 @@ void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm
 	return;
 }
 
-void find_most_violated_constraint_marginrescaling(PATTERN x, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+void initialize_most_violated_constraint_search(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, double * max_score, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+  hbar->position_x = hstar.position_x;
+  hbar->position_y = hstar.position_y;
+  ybar->label = y.label;
+  double * hog = x.hog[hbar->position_x][hbar->position_y];
+  double score = 0.0;
+  int i;
+  for (i = 0; i < sparm->size_hog; i++) {
+    score += sm->w[ybar->label * sparm->size_hog + i + 1] * hog[i];
+  }
+  *max_score = score;
+}
+
+void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Finds the most violated constraint (loss-augmented inference), i.e.,
   computing argmax_{(ybar,hbar)} [<w,psi(x,ybar,hbar)> + loss(y,ybar,hbar)].
@@ -225,8 +238,10 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LABEL y, LABEL *yb
 	double max_score,score;
 	double *hog;
 	FILE	*fp;
-
-	max_score = -DBL_MAX;
+	
+	//make explicit the idea that (y, hstar) is what's returned if the constraint is not violated
+	initialize_most_violated_constraint_search(x, hstar, y, ybar, hbar, &max_score, sm, sparm);
+	
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
 

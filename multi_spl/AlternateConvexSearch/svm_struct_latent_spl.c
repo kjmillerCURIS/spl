@@ -110,7 +110,7 @@ double current_obj_val(EXAMPLE *ex, SVECTOR **fycache, long m, STRUCTMODEL *sm, 
   for (i=0;i<m;i++) {
 		if(!valid_examples[i])
 			continue;
-    find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].y, &ybar, &hbar, sm, sparm);
+    find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].h, ex[i].y, &ybar, &hbar, sm, sparm);
     /* get difference vector */
     fy = copy_svector(fycache[i]);
     fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
@@ -193,7 +193,7 @@ SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long
 			continue;
 		}
 
-    find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].y, &ybar, &hbar, sm, sparm);
+    find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].h, ex[i].y, &ybar, &hbar, sm, sparm);
     /* get difference vector */
     fy = copy_svector(fycache[i]);
     fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
@@ -346,7 +346,7 @@ double stochastic_subgradient_descent(double *w, long m, int MAX_ITER, double C,
 
 		for(i=0;i<subset_size;i++) {
 			/* find subgradient */
-   		find_most_violated_constraint_marginrescaling(ex[valid_indices[perm[i]]].x, ex[valid_indices[perm[i]]].y, &ybar, &hbar, sm, sparm);
+		  find_most_violated_constraint_marginrescaling(ex[valid_indices[perm[i]]].x, ex[valid_indices[perm[i]]].h,ex[valid_indices[perm[i]]].y, &ybar, &hbar, sm, sparm);
    		lossval = loss(ex[valid_indices[perm[i]]].y,ybar,hbar,sparm);
    		fy = copy_svector(fycache[valid_indices[perm[i]]]);
    		fybar = psi(ex[valid_indices[perm[i]]].x,ybar,hbar,sm,sparm);
@@ -630,7 +630,7 @@ int update_valid_examples(double *w, long m, double C, SVECTOR **fycache, EXAMPL
 		penalty = DBL_MAX;
 
 	for (i=0;i<m;i++) {
-		find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].y, &ybar, &hbar, sm, sparm);
+	  find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].h, ex[i].y, &ybar, &hbar, sm, sparm);
 		fy = copy_svector(fycache[i]);
 		fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
 		slack[i].index = i;
@@ -686,7 +686,7 @@ double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex,
 	int half;
 
 	for (i=0;i<m;i++) {
-		find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].y, &ybar, &hbar, sm, sparm);
+	  find_most_violated_constraint_marginrescaling(ex[i].x, ex[i].h, ex[i].y, &ybar, &hbar, sm, sparm);
 		fy = copy_svector(fycache[i]);
 		fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
 		slack[i].index = i;
