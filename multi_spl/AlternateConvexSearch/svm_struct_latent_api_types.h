@@ -1,3 +1,4 @@
+
 /************************************************************************/
 /*                                                                      */
 /*   svm_struct_latent_api_types.h                                      */
@@ -21,11 +22,10 @@ typedef struct pattern {
     Type definition for input pattern x
   */
   int example_id;
-  char image_name[1000];
+  char image_path[1000];
   double example_cost;
-	int width;
-	int height;
-	double ***hog;
+  int width;
+  int height;
 } PATTERN;
 
 typedef struct label {
@@ -67,6 +67,13 @@ typedef struct structmodel {
   /* other information that is needed for the stuctural model can be
      added here, e.g. the grammar rules for NLP parsing */
   long n;             /* number of examples */
+  int num_kernels;
+  int * kernel_sizes;
+  char ** kernel_names;
+  int bbox_width;
+  int bbox_height;
+  int bbox_step_x;
+  int bbox_step_y;
 } STRUCTMODEL;
 
 
@@ -98,3 +105,10 @@ typedef struct struct_learn_parm {
 	int n_classes;
 } STRUCT_LEARN_PARM;
 
+typedef struct spl_variable_struct {
+  int num_valid_examples;
+  int num_valid_kernels;
+  int * valid_examples; //boolean
+  int * valid_kernel_indices;
+  int ** valid_kernel_indices_per_example; //has an array for each example (including those with no valid kernels)
+} SPL_VAR_STRUCT;

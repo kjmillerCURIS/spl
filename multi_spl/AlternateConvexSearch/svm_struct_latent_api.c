@@ -23,13 +23,20 @@
 #define MAX_INPUT_LINE_LENGTH 10000
 #define DELTA 1
 
-SAMPLE read_struct_examples(char *file, STRUCT_LEARN_PARM *sparm) {
-/*
-  Read input examples {(x_1,y_1),...,(x_n,y_n)} from file.
-  The type of pattern x and label y has to follow the definition in 
-  svm_struct_latent_api_types.h. Latent variables h can be either
-  initialized in this function or by calling init_latent_variables(). 
-*/
+int get_sample_size(char * file) {
+  int sample_size;
+  FILE * fp = fopen(file, "r");
+  fscanf(fp, "%d\n", &sample_size);
+  fclose(fp);
+  return sample_size;
+}
+
+SAMPLE read_struct_examples(char *file, STRUCTMODEL * sm, STRUCT_LEARN_PARM *sparm) {
+  /*
+    Gets and stores image file name, line number (i.e. index), label, width, and height for each example.
+    Width and height should be in units such that width * height = number of options for h.
+  */
+
   SAMPLE sample;
   int num_examples,label,height,width;
 	int i,j,k,l;
@@ -53,7 +60,7 @@ SAMPLE read_struct_examples(char *file, STRUCT_LEARN_PARM *sparm) {
     pchar = line;
     while ((*pchar)!=' ') pchar++;
     *pchar = '\0';
-    strcpy(sample.examples[i].x.image_name, line);
+    strcpy(sample.examples[i].x.image_path, line);
     pchar++;
 
     /* label: {0, 1} */
@@ -66,60 +73,61 @@ SAMPLE read_struct_examples(char *file, STRUCT_LEARN_PARM *sparm) {
     last_pchar = pchar;
     while ((*pchar)!=' ') pchar++;
     *pchar = '\0';
-    width = atoi(last_pchar);
+    height = atoi(last_pchar);
     pchar++;
 
     last_pchar = pchar;
     while ((*pchar)!='\n') pchar++;
     *pchar = '\0';
-    height = atoi(last_pchar);
+    width = atoi(last_pchar);
 
-		assert(label >= 0 && label < sparm->n_classes);
+    assert(label >= 0 && label < sparm->n_classes);
     sample.examples[i].y.label = label;
-		sample.examples[i].x.width = width;
-		sample.examples[i].x.height = height;
+    sample.examples[i].x.width = get_num_bbox_positions(width, sm->bbox_width, sm->bbox_step_x);
+    sample.examples[i].x.height = get_num_bbox_positions(height, sm->bbox_height, sm->bbox_step_y);
     sample.examples[i].x.example_id = i;
-		sample.examples[i].x.example_cost = 1.0;
+    sample.examples[i].x.example_cost = 1.0;
   }
   assert(i==num_examples);
   fclose(fp);  
-
-	/* load hog */
-	printf("\nLoading HOG features of size %d\n",sparm->size_hog); fflush(stdout);
-	for(i = 0; i < num_examples; i++) {
-		printf("."); fflush(stdout);
-		sample.examples[i].x.hog = (double ***) my_malloc(sample.examples[i].x.width*sizeof(double **));
-		for(j = 0; j < sample.examples[i].x.width; j++) {
-			sample.examples[i].x.hog[j] = (double **) my_malloc(sample.examples[i].x.height*sizeof(double *));
-			for(k = 0; k < sample.examples[i].x.height; k++) {
-				sample.examples[i].x.hog[j][k] = (double *) my_malloc(sparm->size_hog*sizeof(double));
-				sprintf(line,"%s.%03d.%03d.txt",sample.examples[i].x.image_name,j,k);
-				fp = fopen(line,"r");
-				assert(fp!=NULL);
-				for(l = 0; l < sparm->size_hog; l++) {
-					fscanf(fp,"%lf",&sample.examples[i].x.hog[j][k][l]);
-				}
-				fclose(fp);
-			}
-		}
-	}
-	printf("done.\n"); fflush(stdout);
-
   return(sample); 
 }
 
-void init_struct_model(SAMPLE sample, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, LEARN_PARM *lparm, KERNEL_PARM *kparm) {
+int get_num_bbox_positions(int image_length, int bbox_length, int bbox_step_length) {
+  return (int)ceil((1.0 * image_length - 1.0 * bbox_length) / (1.0 * bbox_step_length));
+}
+
+//file format is "<number of kernels>\n<kernel 0 name>\n<kernel 0 size>\n<kernel 1 name>\n...."
+void read_kernel_info(char * kernel_info_file, STRUCTMODEL * sm) {
+  int k;
+  FILE * fp = fopen(kernel_info_file, "r");
+  fscanf(fp, "%d\n", sm->num_kernels);
+  sm->kernel_names = (char**)malloc(sm->num_kernels * sizeof(char*));
+  sm->kernel_sizes = (int*)malloc(sm->num_kernels * sizeof(int));
+  char cur_kernel_name[1024]; //if you need more than 1023 characters to name a kernel, you need help
+  for (k = 0; k < sm->num_kernels; ++k) {
+    fscanf(fp, "%s\n", cur_kernel_name);
+    sm->kernel_names[k] = strdup(cur_kernel_name);
+    fscanf(fp, "%d\n", &(sm->kernel_sizes[k]));
+  }
+  sm->sizePsi = 0;
+  for (k = 0; k < sm->num_kernels; ++k) {
+    sm->sizePsi += sm->kernel_sizes[k];
+  }
+}
+
+void init_struct_model(int sample_size, char * kernel_info_file, STRUCTMODEL *sm) {
 /*
-  Initialize parameters in STRUCTMODEL sm. Set the diminension 
+  Initialize parameters in STRUCTMODEL sm. Set the dimension 
   of the feature space sm->sizePsi. Can also initialize your own
   variables in sm here. 
 */
 
-  int i,j;
-  
-  sm->n = sample.n;
+  int i,j,k;
 
-	sm->sizePsi = sparm->n_classes*sparm->size_hog;
+  read_kernel_info(kernel_info_file, sm);
+
+  sm->n = sample_size;
 }
 
 void init_latent_variables(SAMPLE *sample, LEARN_PARM *lparm, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
@@ -142,42 +150,67 @@ void init_latent_variables(SAMPLE *sample, LEARN_PARM *lparm, STRUCTMODEL *sm, S
 	}
 }
 
+int in_bounding_box(int pixel_x, int pixel_y, LATENT_VAR h, STRUCTMODEL * sm) {
+  int bbox_start_x = h.position_x * sm->bbox_step_x;
+  int bbox_start_y = h.position_y * sm->bbox_step_y;
+  int bbox_end_x = bbox_start_x + sm->bbox_width;
+  int bbox_end_y = bbox_start_y + sm->bbox_height;
+  return (pixel_x >= bbox_start_x) && (pixel_y >= bbox_start_y) && (pixel_x < bbox_end_x) && (pixel_y < bbox_end_y);
+}
+
+//if the contents of files are ever cached, this would be a good place to implement that cacheing
+FILE * open_kernelized_image_file(PATTERN x, int kernel_ind, STRUCTMODEL * sm) {
+  char file_path[1024];
+  strcpy(file_path, x.image_path);
+  strcat(file_path, "/");
+  strcat(file_path, sm->kernel_names[kernel_ind]);
+  return fopen(file_path, "r");
+}
+
+void fill_max_pool(PATTERN x, LATENT_VAR h, int kernel_ind, double * max_pool_segment, STRUCTMODEL * sm) {
+  int pixel_x, pixel_y, descriptor;
+  FILE * fp = open_kernelized_image_file(x, kernel_ind, sm);
+  fscanf(fp, "%d,%d\n", &pixel_y, &pixel_x); //really just reading and ignoring the width and height to get past the first line, but fscanf needs to put them somewhere
+  while (!feof(fp)) {
+    fscanf(fp, "(%d, %d): %d\n", &pixel_y, &pixel_x, &descriptor);
+    if (in_bounding_box(pixel_x, pixel_y, h, sm)) {
+	  max_pool_segment[descriptor] = 1.0;
+    }
+  }
+  fclose(fp);
+}
+
 SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Creates the feature vector \Psi(x,y,h) and return a pointer to 
   sparse vector SVECTOR in SVM^light format. The dimension of the 
   feature vector returned has to agree with the dimension in sm->sizePsi. 
 */
-  SVECTOR *fvec=NULL;
-  int i;
-  WORD *words;
-
-	words = (WORD*)my_malloc(sizeof(WORD)*(sparm->size_hog+1));
-  assert(words!=NULL);
-
-	for (i = 0; i < sparm->size_hog; i++) {
-		words[i].wnum = y.label*(sparm->size_hog)+i+1;
-		words[i].weight = x.hog[h.position_x][h.position_y][i];
-	}
-	words[sparm->size_hog].wnum = 0;
-	words[sparm->size_hog].weight = 0.0;
-  
-  fvec = create_svector(words,"",1);
-  
-  free(words);
-
-  return(fvec);
+  SVECTOR * fvec = NULL;
+  double * max_pool = (double *)calloc(sm->sizePsi + 1, sizeof(double));
+  //binary labelling for now - 1 means there's a car, 0 means there's no car
+  if (y.label) {
+    int k;
+    int start_ind = 1;
+    for (k = 0; k < sm->num_kernels; ++k) {
+      fill_max_pool(x, h, k, &(max_pool[start_ind]), sm);
+      start_ind += sm->kernel_sizes[k];
+    }
+  }
+  return create_svector_n(max_pool, sm->sizePsi, "", 1);
 }
 
 double compute_w_T_psi(PATTERN *x, int position_x, int position_y, int class, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
-  int i;
-  double score = 0.0;
-
-  double * hog = x->hog[position_x][position_y];
-  for(i = 0; i < sparm->size_hog; i++) {
-    score += sm->w[class*sparm->size_hog+i+1]*hog[i];
-  }
-  return score;
+  double w_T_psi;
+  LABEL y;
+  LATENT_VAR h;
+  y.label = class;
+  h.position_x = position_x;
+  h.position_y = position_y;
+  SVECTOR * psi_vect = psi(*x, y, h, sm, sparm);
+  w_T_psi = sprod_ns(sm->w, psi_vect);
+  free_svector(psi_vect);
+  return w_T_psi;
 }
 
 
@@ -195,20 +228,13 @@ void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm
 	int cur_class, cur_position_x, cur_position_y;
 	double max_score;
 	double score;
-	double *hog;
 	FILE	*fp;
 
 	max_score = -DBL_MAX;
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
-
-			hog = x.hog[cur_position_x][cur_position_y];
-
 			for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
-				score = 0;
-				for(i = 0; i < sparm->size_hog; i++) {
-					score += sm->w[cur_class*sparm->size_hog+i+1]*hog[i];
-				}
+			  score = compute_w_T_psi(&x, h->position_x, h->position_y, y->label, sm, sparm);
 				if(score > max_score) {
 					max_score = score;
 					y->label = cur_class;
@@ -250,7 +276,7 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
 			for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
-			  score = compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, sm, sparm);
+			        score = compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, sm, sparm);
 				if(cur_class != y.label)
 					score += 1;
 				if(score > max_score) {
@@ -308,24 +334,23 @@ LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, STRUCTMODEL *sm, STRUCT_LE
 
   LATENT_VAR h;
 
+  if (y.label == 0) {
+    h.position_x = 0;
+    h.position_y = 0;
+    return h;
+  }
+
 	int i;
 	int width = x.width;
 	int height = x.height;
 	int cur_position_x, cur_position_y;
 	double max_score, score;
-	double *hog;
 	FILE	*fp;
 
 	max_score = -DBL_MAX;
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
-
-			hog = x.hog[cur_position_x][cur_position_y];
-
-			score = 0;
-			for(i = 0; i < sparm->size_hog; i++) {
-				score += sm->w[y.label*sparm->size_hog+i+1]*hog[i];
-			}
+		        score = compute_w_T_psi(&x, cur_position_x, cur_position_y, y.label, sm, sparm);
 			if(score > max_score) {
 				max_score = score;
 				h.position_x = cur_position_x;
@@ -354,6 +379,7 @@ double loss(LABEL y, LABEL ybar, LATENT_VAR hbar, STRUCT_LEARN_PARM *sparm) {
 void write_struct_model(char *file, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Writes the learned weight vector sm->w to file after training. 
+  Also writes bounding-box info (before sm->w)
 */
   FILE *modelfl;
   int i;
@@ -364,6 +390,11 @@ void write_struct_model(char *file, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 		exit(1);
   }
   
+  fprintf(modelfl, "%d\n", sm->bbox_height);
+  fprintf(modelfl, "%d\n", sm->bbox_width);
+  fprintf(modelfl, "%d\n", sm->bbox_step_y);
+  fprintf(modelfl, "%d\n", sm->bbox_step_x);
+
   for (i=1;i<sm->sizePsi+1;i++) {
     fprintf(modelfl, "%d:%.16g\n", i, sm->w[i]);
   }
@@ -371,63 +402,57 @@ void write_struct_model(char *file, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
  
 }
 
-STRUCTMODEL read_struct_model(char *file, STRUCT_LEARN_PARM *sparm) {
+void read_struct_model(char *model_file, STRUCTMODEL * sm) {
 /*
   Reads in the learned model parameters from file into STRUCTMODEL sm.
   The input file format has to agree with the format in write_struct_model().
 */
-  STRUCTMODEL sm;
 
   FILE *modelfl;
-  int sizePsi,i, fnum;
+  int i, fnum;
   double fweight;
   char line[1000];
   
-  modelfl = fopen(file,"r");
+  modelfl = fopen(model_file,"r");
   if (modelfl==NULL) {
-    printf("Cannot open model file %s for input!", file);
+    printf("Cannot open model file %s for input!", model_file);
 	exit(1);
   }
   
-	sizePsi = sparm->n_classes*sparm->size_hog;
-  sm.sizePsi = sizePsi;
-  sm.w = (double*)malloc((sizePsi+1)*sizeof(double));
-  for (i=0;i<sizePsi+1;i++) {
-    sm.w[i] = 0.0;
-  }
+  sm->w = (double*)calloc(sm->sizePsi + 1, sizeof(double));
   
+  fscanf(modelfl, "%d\n", &(sm->bbox_height));
+  fscanf(modelfl, "%d\n", &(sm->bbox_width));
+  fscanf(modelfl, "%d\n", &(sm->bbox_step_y));
+  fscanf(modelfl, "%d\n", &(sm->bbox_step_x));
+
   while (!feof(modelfl)) {
     fscanf(modelfl, "%d:%lf", &fnum, &fweight);
-		sm.w[fnum] = fweight;
+		sm->w[fnum] = fweight;
   }
 
   fclose(modelfl);
-
-  return(sm);
 }
 
 void free_struct_model(STRUCTMODEL sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Free any memory malloc'ed in STRUCTMODEL sm after training. 
 */
-  int i;
+  int i, k;
   
   free(sm.w);
+
+  for (k = 0; k < sm.num_kernels; ++k) {
+    free(sm.kernel_names[k]);
+  }
+  free(sm.kernel_sizes);
+  free(sm.kernel_names);
 }
 
 void free_pattern(PATTERN x) {
 /*
   Free any memory malloc'ed when creating pattern x. 
 */
-	/* free hog */
-	int i,j;
-	for(i = 0; i < x.width; i++) {
-		for(j = 0; j < x.height; j++) {
-			free(x.hog[i][j]);
-		}
-		free(x.hog[i]);
-	}
-	free(x.hog);
 
 }
 
@@ -467,15 +492,13 @@ void parse_struct_parameters(STRUCT_LEARN_PARM *sparm) {
   int i;
   
   /* set default */
-	sparm->rng_seed = 0;
-	sparm->size_hog = 1488;
-	sparm->n_classes = 6;
+  sparm->rng_seed = 0;
+  sparm->n_classes = 6;
   
   for (i=0;(i<sparm->custom_argc)&&((sparm->custom_argv[i])[0]=='-');i++) {
     switch ((sparm->custom_argv[i])[2]) {
       /* your code here */
       case 's': i++; sparm->rng_seed = atoi(sparm->custom_argv[i]); break;
-      case 'h': i++; sparm->size_hog = atoi(sparm->custom_argv[i]); break;
       case 'n': i++; sparm->n_classes = atoi(sparm->custom_argv[i]); break;
       case 't': i++; sparm->margin_type = atoi(sparm->custom_argv[i]); break;
       default: printf("\nUnrecognized option %s!\n\n", sparm->custom_argv[i]); exit(0);

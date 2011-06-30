@@ -41,11 +41,11 @@
 
 #define DEBUG_LEVEL 0
 
+#define KERNEL_INFO_FILE "../data/kernel_info.txt"
+
 int mosek_qp_optimize(double**, double*, double*, long, double, double*);
 
-void my_read_input_parameters(int argc, char* argv[], char *trainfile, char *modelfile, char *examplesfile, char *timefile, char *latentfile,
-			      LEARN_PARM *learn_parm, KERNEL_PARM *kernel_parm, STRUCT_LEARN_PARM *struct_parm, 
-						double *init_spl_weight, double *spl_factor);
+void my_read_input_parameters(int argc, char* argv[], char *trainfile, char *modelfile, char *examplesfile, char *timefile, char *latentfile,LEARN_PARM *learn_parm, KERNEL_PARM *kernel_parm, STRUCTMODEL *sm, STRUCT_LEARN_PARM *struct_parm, double *init_spl_weight, double *spl_factor);
 
 void my_wait_any_key();
 
@@ -898,15 +898,16 @@ int main(int argc, char* argv[]) {
  
 
   /* read input parameters */
-	my_read_input_parameters(argc, argv, trainfile, modelfile, examplesfile, timefile, latentfile, &learn_parm, &kernel_parm, &sparm, 
-													&init_spl_weight, &spl_factor); 
+  my_read_input_parameters(argc, argv, trainfile, modelfile, examplesfile, timefile, latentfile, &learn_parm, &kernel_parm, &sm, &sparm, &init_spl_weight, &spl_factor);
 
   epsilon = learn_parm.eps;
   C = learn_parm.svm_c;
   MAX_ITER = learn_parm.maxiter;
 
+  init_struct_model(get_sample_size(trainfile), KERNEL_INFO_FILE, &sm);
+
   /* read in examples */
-  alldata = read_struct_examples(trainfile,&sparm);
+  alldata = read_struct_examples(trainfile, &sm, &sparm);
   int ntrain = (int) round(1.0*alldata.n); /* no validation set */
 	if(ntrain < alldata.n)
 	{
@@ -922,9 +923,6 @@ int main(int argc, char* argv[]) {
 	}
   ex = sample.examples;
   m = sample.n;
-  
-  /* initialization */
-  init_struct_model(alldata,&sm,&sparm,&learn_parm,&kernel_parm); 
 
   w = create_nvector(sm.sizePsi);
   clear_nvector(w, sm.sizePsi);
@@ -1106,13 +1104,17 @@ int main(int argc, char* argv[]) {
 
 
 void my_read_input_parameters(int argc, char *argv[], char *trainfile, char* modelfile, char *examplesfile, char *timefile, char *latentfile,
-			      LEARN_PARM *learn_parm, KERNEL_PARM *kernel_parm, STRUCT_LEARN_PARM *struct_parm,
+			      LEARN_PARM *learn_parm, KERNEL_PARM *kernel_parm, STRUCTMODEL * sm, STRUCT_LEARN_PARM *struct_parm,
 						double *init_spl_weight, double *spl_factor) {
   
   long i;
 	char filestub[1024];
 
   /* set default */
+  sm->bbox_width = 50;
+  sm->bbox_height = 50;
+  sm->bbox_step_x = 1;
+  sm->bbox_step_y = 1;
   learn_parm->maxiter=20000;
   learn_parm->svm_maxqpsize=100;
   learn_parm->svm_c=100.0;

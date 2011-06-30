@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include "svm_struct_latent_api.h"
 
+#define KERNEL_INFO_FILE "../data/kernel_info.txt"
 
 void read_input_parameters(int argc, char **argv, char *testfile, char *modelfile, char *labelfile, char *latentfile, char *resultfile, STRUCT_LEARN_PARM *sparm);
 
@@ -40,24 +41,22 @@ int main(int argc, char* argv[]) {
 
   SAMPLE testsample;
   LABEL y;
-  LATENT_VAR h; 
+  LATENT_VAR h;
 
   /* read input parameters */
   read_input_parameters(argc,argv,testfile,modelfile,labelfile,latentfile,resultfile,&sparm);
 	flabel = fopen(labelfile,"w");
 	flatent = fopen(latentfile,"w");
 
-  /* read model file */
-  printf("Reading model..."); fflush(stdout);
-  model = read_struct_model(modelfile, &sparm);
-  printf("done.\n"); 
+  init_struct_model(get_sample_size(testfile), KERNEL_INFO_FILE, &model);
+
+  read_struct_model(modelfile, &model);
 
   /* read test examples */
 	printf("Reading test examples..."); fflush(stdout);
-  testsample = read_struct_examples(testfile,&sparm);
+	testsample = read_struct_examples(testfile, &model, &sparm);
 	printf("done.\n");
 
-  init_struct_model(testsample,&model,&sparm,&lparm,&kparm);
   
   avgloss = 0.0;
   correct = 0;
