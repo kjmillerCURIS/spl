@@ -93,16 +93,16 @@ double* add_list_nn(SVECTOR *a, long totwords)
     return(sum);
 }
 
-void find_most_violated_constraint(EXAMPLE *ex, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+void find_most_violated_constraint(EXAMPLE *ex, LABEL *ybar, LATENT_VAR *hbar, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
   switch (sparm->margin_type) {
-  case 0: find_most_violated_constraint_marginrescaling (ex->x, ex->h, ex->y, ybar, hbar, sm, sparm); break;
-  case 1: find_most_violated_constraint_differenty (ex->x, ex->h, ex->y, ybar, hbar, sm, sparm); break;
+  case 0: find_most_violated_constraint_marginrescaling (ex->x, ex->h, ex->y, ybar, hbar, cached_images, sm, sparm); break;
+  case 1: find_most_violated_constraint_differenty (ex->x, ex->h, ex->y, ybar, hbar, cached_images, sm, sparm); break;
   default: printf ("Unrecognized margin_type '%d'\n", sparm->margin_type);
     exit(1);
   }
 }
 
-double current_obj_val(EXAMPLE *ex, SVECTOR **fycache, long m, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, double C, int *valid_examples) {
+double current_obj_val(EXAMPLE *ex, SVECTOR **fycache, long m, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, double C, int *valid_examples) {
 
   long i, j;
   SVECTOR *f, *fy, *fybar, *lhs;
@@ -118,10 +118,10 @@ double current_obj_val(EXAMPLE *ex, SVECTOR **fycache, long m, STRUCTMODEL *sm, 
   for (i=0;i<m;i++) {
 		if(!valid_examples[i])
 			continue;
-    find_most_violated_constraint(&(ex[i]), &ybar, &hbar, sm, sparm);
+    find_most_violated_constraint(&(ex[i]), &ybar, &hbar, cached_images, sm, sparm);
     /* get difference vector */
     fy = copy_svector(fycache[i]);
-    fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
+    fybar = psi(ex[i].x,ybar,hbar,cached_images,sm,sparm);
     lossval = loss(ex[i].y,ybar,hbar,sparm);
 
     /* scale difference vector */
@@ -170,8 +170,7 @@ int compar(const void *a, const void *b)
 }
 
 
-SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long m, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm,
-														int *valid_examples) {
+SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long m, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
 
   long i, j;
   SVECTOR *f, *fy, *fybar, *lhs;
@@ -201,10 +200,10 @@ SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long
 			continue;
 		}
 
-    find_most_violated_constraint(&(ex[i]), &ybar, &hbar, sm, sparm);
+     find_most_violated_constraint(&(ex[i]), &ybar, &hbar, cached_images, sm, sparm);
     /* get difference vector */
     fy = copy_svector(fycache[i]);
-    fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
+    fybar = psi(ex[i].x,ybar,hbar,cached_images,sm,sparm);
     lossval = loss(ex[i].y,ybar,hbar,sparm);
     free_label(ybar);
     free_latent_var(hbar);
@@ -302,8 +301,7 @@ long *randperm(long m, long n)
 }
 
 /* stochastic subgradient descent for solving the convex structural SVM problem */
-double stochastic_subgradient_descent(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, 
-															STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
+double stochastic_subgradient_descent(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
 
 	/* constants */
 	int subset_size = 10;
@@ -354,10 +352,10 @@ double stochastic_subgradient_descent(double *w, long m, int MAX_ITER, double C,
 
 		for(i=0;i<subset_size;i++) {
 			/* find subgradient */
-		  find_most_violated_constraint(&(ex[valid_indices[perm[i]]]), &ybar, &hbar, sm, sparm);
+		  find_most_violated_constraint(&(ex[valid_indices[perm[i]]]), &ybar, &hbar, cached_images, sm, sparm);
    		lossval = loss(ex[valid_indices[perm[i]]].y,ybar,hbar,sparm);
    		fy = copy_svector(fycache[valid_indices[perm[i]]]);
-   		fybar = psi(ex[valid_indices[perm[i]]].x,ybar,hbar,sm,sparm);
+   		fybar = psi(ex[valid_indices[perm[i]]].x,ybar,hbar,cached_images,sm,sparm);
 	
 			/* update weight vector */
 			/* ignoring example cost for simplicity */
@@ -386,13 +384,12 @@ double stochastic_subgradient_descent(double *w, long m, int MAX_ITER, double C,
   printf(" Inner loop optimization finished.\n"); fflush(stdout); 
 
 	/* return primal objective value */
-	primal_obj = current_obj_val(ex, fycache, m, sm, sparm, C, valid_examples);
+        primal_obj = current_obj_val(ex, fycache, m, cached_images, sm, sparm, C, valid_examples);
 	return(primal_obj);
 
 }
 
-double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, 
-															STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
+double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
   long i,j;
   double *alpha;
   DOC **dXc; /* constraint matrix */
@@ -451,7 +448,7 @@ double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C, double
 
   printf("Running structural SVM solver: "); fflush(stdout); 
 
-	new_constraint = find_cutting_plane(ex, fycache, &margin, m, sm, sparm, valid_examples);
+        new_constraint = find_cutting_plane(ex, fycache, &margin, m, cached_images, sm, sparm, valid_examples);
  	value = margin - sprod_ns(w, new_constraint);
 	while((value>threshold+epsilon)&&(iter<MAX_ITER)) {
 		iter+=1;
@@ -569,7 +566,7 @@ double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C, double
 		else
 			threshold = 0.0;
 
- 		new_constraint = find_cutting_plane(ex, fycache, &margin, m, sm, sparm, valid_examples);
+ 		new_constraint = find_cutting_plane(ex, fycache, &margin, m, cached_images, sm, sparm, valid_examples);
    	value = margin - sprod_ns(w, new_constraint);
 
 		if((iter % CLEANUP_CHECK) == 0)
@@ -580,7 +577,7 @@ double cutting_plane_algorithm(double *w, long m, int MAX_ITER, double C, double
 
  	} // end cutting plane while loop 
 
-	primal_obj = current_obj_val(ex, fycache, m, sm, sparm, C, valid_examples);
+	primal_obj = current_obj_val(ex, fycache, m, cached_images, sm, sparm, C, valid_examples);
 
   printf(" Inner loop optimization finished.\n"); fflush(stdout); 
       
@@ -616,8 +613,7 @@ int check_acs_convergence(int *prev_valid_examples, int *valid_examples, long m)
 	return converged;
 }
 
-int update_valid_examples(double *w, long m, double C, SVECTOR **fycache, EXAMPLE *ex, 
-													STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight) {
+int update_valid_examples(double *w, long m, double C, SVECTOR **fycache, EXAMPLE *ex, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight) {
 
 	long i, j;
 
@@ -638,9 +634,9 @@ int update_valid_examples(double *w, long m, double C, SVECTOR **fycache, EXAMPL
 		penalty = DBL_MAX;
 
 	for (i=0;i<m;i++) {
-	  find_most_violated_constraint(&(ex[i]), &ybar, &hbar, sm, sparm);
+	  find_most_violated_constraint(&(ex[i]), &ybar, &hbar, cached_images, sm, sparm);
 		fy = copy_svector(fycache[i]);
-		fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
+		fybar = psi(ex[i].x,ybar,hbar,cached_images,sm,sparm);
 		slack[i].index = i;
 		slack[i].val = loss(ex[i].y,ybar,hbar,sparm);
 		for (f=fy;f;f=f->next) {
@@ -681,7 +677,7 @@ int update_valid_examples(double *w, long m, double C, SVECTOR **fycache, EXAMPL
 	return nValid;
 }
 
-double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 
 	long i, j;
 
@@ -693,9 +689,9 @@ double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex, STR
 	int half;
 
 	for (i=0;i<m;i++) {
-	  find_most_violated_constraint(&(ex[i]), &ybar, &hbar, sm, sparm);
+	  find_most_violated_constraint(&(ex[i]), &ybar, &hbar, cached_images, sm, sparm);
 		fy = copy_svector(fycache[i]);
-		fybar = psi(ex[i].x,ybar,hbar,sm,sparm);
+		fybar = psi(ex[i].x,ybar,hbar,cached_images,sm,sparm);
 		slack[i].index = i;
 		slack[i].val = loss(ex[i].y,ybar,hbar,sparm);
 		for (f=fy;f;f=f->next) {
@@ -730,8 +726,7 @@ double get_init_spl_weight(long m, double C, SVECTOR **fycache, EXAMPLE *ex, STR
 	return(init_spl_weight);
 }
 
-double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, 
-                               STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight) {
+double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double epsilon, SVECTOR **fycache, EXAMPLE *ex, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples, double spl_weight) {
 
 	long i;
 	int iter = 0, converged, nValid;
@@ -742,8 +737,8 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
 
 	for (i=0;i<sm->sizePsi+1;i++)
 		best_w[i] = w[i];
-	nValid = update_valid_examples(w, m, C, fycache, ex, sm, sparm, valid_examples, spl_weight);
-	last_relaxed_primal_obj = current_obj_val(ex, fycache, m, sm, sparm, C, valid_examples);
+	nValid = update_valid_examples(w, m, C, fycache, ex, cached_images, sm, sparm, valid_examples, spl_weight);
+	last_relaxed_primal_obj = current_obj_val(ex, fycache, m, cached_images, sm, sparm, C, valid_examples);
 	if(nValid < m)
 		last_relaxed_primal_obj += (double)(m-nValid)/((double)spl_weight);
 
@@ -752,7 +747,7 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
 	}
 
 	for (iter=0;;iter++) {
-		nValid = update_valid_examples(w, m, C, fycache, ex, sm, sparm, valid_examples, spl_weight);
+	        nValid = update_valid_examples(w, m, C, fycache, ex, cached_images, sm, sparm, valid_examples, spl_weight);
 		printf("ACS Iteration %d: number of examples = %d\n",iter,nValid); fflush(stdout);
 		converged = check_acs_convergence(prev_valid_examples,valid_examples,m);
 		if(converged) {
@@ -761,9 +756,9 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
 		for (i=0;i<sm->sizePsi+1;i++)
 			w[i] = 0.0;
 		if(!sparm->optimizer_type)
-			relaxed_primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, sm, sparm, valid_examples);
+		  relaxed_primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, cached_images, sm, sparm, valid_examples);
 		else
-			relaxed_primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, epsilon, fycache, ex, sm, sparm, valid_examples);
+		  relaxed_primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, epsilon, fycache, ex, cached_images, sm, sparm, valid_examples);
 		if(nValid < m)
 			relaxed_primal_obj += (double)(m-nValid)/((double)spl_weight);
 		decrement = last_relaxed_primal_obj-relaxed_primal_obj;
@@ -802,7 +797,7 @@ double alternate_convex_search(double *w, long m, int MAX_ITER, double C, double
 	}
 
 	double primal_obj;
-	primal_obj = current_obj_val(ex, fycache, m, sm, sparm, C, prev_valid_examples);
+	primal_obj = current_obj_val(ex, fycache, m, cached_images, sm, sparm, C, prev_valid_examples);
 	
 	free(prev_valid_examples);
 	free(best_w);
@@ -843,7 +838,7 @@ SAMPLE  generate_validation_set(SAMPLE alldata, long *perm, int ntrain)
   return val;
 }
 
-double compute_current_loss(SAMPLE val, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm)
+double compute_current_loss(SAMPLE val, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm)
 {
 	long i;
 	LABEL y;
@@ -852,7 +847,7 @@ double compute_current_loss(SAMPLE val, STRUCTMODEL *sm, STRUCT_LEARN_PARM *spar
 	double store;
 	for(i = 0; i < val.n; i++)
 	{
-		classify_struct_example(val.examples[i].x,&y,&h,sm,sparm);
+	        classify_struct_example(val.examples[i].x,&y,&h,cached_images,sm,sparm);
 		store = loss(val.examples[i].y,y,h,sparm);
 		cur_loss += store;
 	}
@@ -906,6 +901,8 @@ int main(int argc, char* argv[]) {
 
   init_struct_model(get_sample_size(trainfile), KERNEL_INFO_FILE, &sm);
 
+  IMAGE_KERNEL_CACHE ** cached_images = init_cached_images(&sm);
+
   /* read in examples */
   alldata = read_struct_examples(trainfile, &sm, &sparm);
   int ntrain = (int) round(1.0*alldata.n); /* no validation set */
@@ -923,6 +920,8 @@ int main(int argc, char* argv[]) {
 	}
   ex = sample.examples;
   m = sample.n;
+
+  printf("m = %d\n", m);
 
   w = create_nvector(sm.sizePsi);
   clear_nvector(w, sm.sizePsi);
@@ -943,7 +942,7 @@ int main(int argc, char* argv[]) {
   /* prepare feature vector cache for correct labels with imputed latent variables */
   fycache = (SVECTOR**)malloc(m*sizeof(SVECTOR*));
   for (i=0;i<m;i++) {
-    fy = psi(ex[i].x, ex[i].y, ex[i].h, &sm, &sparm);
+    fy = psi(ex[i].x, ex[i].y, ex[i].h, cached_images, &sm, &sparm);
     diff = add_list_ss(fy);
     free_svector(fy);
     fy = diff;
@@ -960,16 +959,16 @@ int main(int argc, char* argv[]) {
 		int initIter;
 		for (initIter=0;initIter<2;initIter++) {
 			if(!sparm.optimizer_type)
-				primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples);
+			  primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, cached_images, &sm, &sparm, valid_examples);
 			else
-				primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples);
+			  primal_obj = stochastic_subgradient_descent(w, m, MAX_ITER, C, epsilon, fycache, ex, cached_images, &sm, &sparm, valid_examples);
   		for (i=0;i<m;i++) {
    	 		free_latent_var(ex[i].h);
-   	 		ex[i].h = infer_latent_variables(ex[i].x, ex[i].y, &sm, &sparm);
+   	 		ex[i].h = infer_latent_variables(ex[i].x, ex[i].y, cached_images, &sm, &sparm);
    		}
 	    for (i=0;i<m;i++) {
   	    free_svector(fycache[i]);
-    	  fy = psi(ex[i].x, ex[i].y, ex[i].h, &sm, &sparm);
+	    fy = psi(ex[i].x, ex[i].y, ex[i].h, cached_images, &sm, &sparm);
      	 diff = add_list_ss(fy);
      	 free_svector(fy);
      	 fy = diff;
@@ -999,14 +998,14 @@ int main(int argc, char* argv[]) {
 	spl_weight = init_spl_weight;
   while ((outer_iter<2)||((!stop_crit)&&(outer_iter<MAX_OUTER_ITER))) { 
 		if(!outer_iter && init_spl_weight) {
-			spl_weight = get_init_spl_weight(m, C, fycache, ex, &sm, &sparm);
+		  spl_weight = get_init_spl_weight(m, C, fycache, ex, cached_images, &sm, &sparm);
       printf("Setting initial spl weight to %f\n",spl_weight);
 		}
     printf("OUTER ITER %d\n", outer_iter); 
     /* cutting plane algorithm */
-    //primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples);
+    //primal_obj = cutting_plane_algorithm(w, m, MAX_ITER, C, epsilon, fycache, ex, cached_images, &sm, &sparm, valid_examples);
 		/* solve biconvex self-paced learning problem */
-		primal_obj = alternate_convex_search(w, m, MAX_ITER, C, epsilon, fycache, ex, &sm, &sparm, valid_examples, spl_weight);
+               primal_obj = alternate_convex_search(w, m, MAX_ITER, C, epsilon, fycache, ex, cached_images, &sm, &sparm, valid_examples, spl_weight);
 		int nValid = 0;
 		for (i=0;i<m;i++) {
 			fprintf(fexamples,"%d ",valid_examples[i]);
@@ -1042,7 +1041,7 @@ int main(int argc, char* argv[]) {
 		if(nValid) {
     	for (i=0;i<m;i++) {
       	free_latent_var(ex[i].h);
-      	ex[i].h = infer_latent_variables(ex[i].x, ex[i].y, &sm, &sparm);
+      	ex[i].h = infer_latent_variables(ex[i].x, ex[i].y, cached_images, &sm, &sparm);
     	}
 			latent_update++;
 		}
@@ -1050,7 +1049,7 @@ int main(int argc, char* argv[]) {
     /* re-compute feature vector cache */
     for (i=0;i<m;i++) {
       free_svector(fycache[i]);
-      fy = psi(ex[i].x, ex[i].y, ex[i].h, &sm, &sparm);
+      fy = psi(ex[i].x, ex[i].y, ex[i].h, cached_images, &sm, &sparm);
       diff = add_list_ss(fy);
       free_svector(fy);
       fy = diff;
@@ -1060,7 +1059,7 @@ int main(int argc, char* argv[]) {
 		write_struct_model(itermodelfile, &sm, &sparm);
 
 		if(ntrain < alldata.n) {
-			cur_loss = compute_current_loss(val,&sm,&sparm);
+		        cur_loss = compute_current_loss(val,cached_images,&sm,&sparm);
 			if(cur_loss <= best_loss) {
 				best_loss = cur_loss;
 				loss_iter = outer_iter;
@@ -1083,6 +1082,7 @@ int main(int argc, char* argv[]) {
   // skip testing for the moment  
 
   /* free memory */
+  free_cached_images(cached_images, &sm);
   free_struct_sample(alldata);
 	if(ntrain < alldata.n)
 	{

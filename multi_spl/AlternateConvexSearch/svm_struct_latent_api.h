@@ -18,6 +18,8 @@
 #include "svm_struct_latent_api_types.h"
 #include <float.h>
 
+void free_cached_images(IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL * sm);
+IMAGE_KERNEL_CACHE ** init_cached_images(STRUCTMODEL * sm);
 int get_sample_size(char * file);
 SAMPLE read_struct_examples(char *file, STRUCTMODEL * sm, STRUCT_LEARN_PARM *sparm);
 int get_num_bbox_positions(int image_length, int bbox_length, int bbox_step_length);
@@ -26,14 +28,14 @@ void init_struct_model(int sample_size, char * kernel_info_file, STRUCTMODEL *sm
 void init_latent_variables(SAMPLE *sample, LEARN_PARM *lparm, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
 int in_bounding_box(int pixel_x, int pixel_y, LATENT_VAR h, STRUCTMODEL * sm);
 FILE * open_kernelized_image_file(PATTERN x, int kernel_ind, STRUCTMODEL * sm);
-void fill_max_pool(PATTERN x, LATENT_VAR h, int kernel_ind, double * max_pool_segment, STRUCTMODEL * sm);
-SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
-void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
-void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
-void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
-void initialize_most_violated_constraint_search(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, double * max_score, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
-double compute_w_T_psi(PATTERN *x, int position_x, int position_y, int class, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
-LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+void fill_max_pool(PATTERN x, LATENT_VAR h, int kernel_ind, double * max_pool_segment, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL * sm);
+SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+void initialize_most_violated_constraint_search(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, double * max_score, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+double compute_w_T_psi(PATTERN *x, int position_x, int position_y, int class, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
+LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, IMAGE_KERNEL_CACHE ** cache_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
 double loss(LABEL y, LABEL ybar, LATENT_VAR hbar, STRUCT_LEARN_PARM *sparm);
 void write_struct_model(char *file, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm);
 void read_struct_model(char *model_file, STRUCTMODEL *sm);
@@ -46,5 +48,3 @@ void parse_struct_parameters(STRUCT_LEARN_PARM *sparm);
 
 void print_latent_var(LATENT_VAR h, FILE *flatent);
 void print_label(LABEL l, FILE *flabel);
-
-

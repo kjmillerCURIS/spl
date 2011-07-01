@@ -1,4 +1,3 @@
-
 /************************************************************************/
 /*                                                                      */
 /*   svm_struct_latent_api_types.h                                      */
@@ -27,6 +26,19 @@ typedef struct pattern {
   int width;
   int height;
 } PATTERN;
+
+typedef struct point_and_descriptor {
+  int x;
+  int y;
+  int descriptor;
+} POINT_AND_DESCRIPTOR;
+
+typedef struct image_kernel_cache {
+  int num_points;
+  POINT_AND_DESCRIPTOR * points_and_descriptors;
+  int * begins;
+  int * ends;
+} IMAGE_KERNEL_CACHE;
 
 typedef struct label {
   /*

@@ -52,6 +52,8 @@ int main(int argc, char* argv[]) {
 
   read_struct_model(modelfile, &model);
 
+  IMAGE_KERNEL_CACHE ** cached_images = init_cached_images(&model);
+
   /* read test examples */
 	printf("Reading test examples..."); fflush(stdout);
 	testsample = read_struct_examples(testfile, &model, &sparm);
@@ -61,7 +63,7 @@ int main(int argc, char* argv[]) {
   avgloss = 0.0;
   correct = 0;
   for (i=0;i<testsample.n;i++) {
-    classify_struct_example(testsample.examples[i].x,&y,&h,&model,&sparm);
+    classify_struct_example(testsample.examples[i].x,&y,&h,cached_images,&model,&sparm);
     l = loss(testsample.examples[i].y,y,h,&sparm);
     avgloss += l;
     if (l==0) correct++;
@@ -85,6 +87,7 @@ int main(int argc, char* argv[]) {
   fprintf(fresult,"%.4f\n",1.0 - ((float) correct)/testsample.n);
   fclose(fresult);
 
+  free_cached_images(cached_images, &model);
   free_struct_sample(testsample);
   free_struct_model(model,&sparm);
 

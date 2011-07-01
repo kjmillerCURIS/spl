@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include <time.h>
 #include "svm_struct_latent_api_types.h"
 #include "./SFMT-src-1.3.3/SFMT.h"
 
@@ -29,6 +30,25 @@ int get_sample_size(char * file) {
   fscanf(fp, "%d\n", &sample_size);
   fclose(fp);
   return sample_size;
+}
+
+IMAGE_KERNEL_CACHE ** init_cached_images(STRUCTMODEL * sm) {
+  return (IMAGE_KERNEL_CACHE **)calloc(sm->n, sizeof(IMAGE_KERNEL_CACHE *));
+}
+
+void free_cached_images(IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL * sm) {
+  int i, k;
+  for (i = 0; i < sm->n; ++i) {
+    if (cached_images[i] != NULL) {
+      for (k = 0; k < sm->num_kernels; ++k) {
+	free(cached_images[i][k].points_and_descriptors);
+	free(cached_images[i][k].begins);
+	free(cached_images[i][k].ends);
+      }
+    }
+    free(cached_images[i]);
+  }
+  free(cached_images);
 }
 
 SAMPLE read_struct_examples(char *file, STRUCTMODEL * sm, STRUCT_LEARN_PARM *sparm) {
@@ -101,7 +121,7 @@ int get_num_bbox_positions(int image_length, int bbox_length, int bbox_step_leng
 void read_kernel_info(char * kernel_info_file, STRUCTMODEL * sm) {
   int k;
   FILE * fp = fopen(kernel_info_file, "r");
-  fscanf(fp, "%d\n", sm->num_kernels);
+  fscanf(fp, "%d\n", &(sm->num_kernels));
   sm->kernel_names = (char**)malloc(sm->num_kernels * sizeof(char*));
   sm->kernel_sizes = (int*)malloc(sm->num_kernels * sizeof(int));
   char cur_kernel_name[1024]; //if you need more than 1023 characters to name a kernel, you need help
@@ -167,25 +187,96 @@ FILE * open_kernelized_image_file(PATTERN x, int kernel_ind, STRUCTMODEL * sm) {
   return fopen(file_path, "r");
 }
 
-void fill_max_pool(PATTERN x, LATENT_VAR h, int kernel_ind, double * max_pool_segment, STRUCTMODEL * sm) {
-  int pixel_x, pixel_y, descriptor;
+void fill_image_kernel_cache(PATTERN x, int kernel_ind, IMAGE_KERNEL_CACHE * ikc, STRUCTMODEL * sm) {
+  int p, l;
+  char throwaway_line[1024];
   FILE * fp = open_kernelized_image_file(x, kernel_ind, sm);
-  fscanf(fp, "%d,%d\n", &pixel_y, &pixel_x); //really just reading and ignoring the width and height to get past the first line, but fscanf needs to put them somewhere
-  while (!feof(fp)) {
-    fscanf(fp, "(%d, %d): %d\n", &pixel_y, &pixel_x, &descriptor);
-    if (in_bounding_box(pixel_x, pixel_y, h, sm)) {
-	  max_pool_segment[descriptor] = 1.0;
-    }
+  fscanf(fp, "%d\n", &(ikc->num_points));
+  ikc->points_and_descriptors = (POINT_AND_DESCRIPTOR *)calloc(ikc->num_points, sizeof(POINT_AND_DESCRIPTOR));
+  fscanf(fp, "%s\n", throwaway_line);
+  for (p = 0; p < ikc->num_points; ++p) {
+    fscanf(fp, "(%d,%d):%d\n", &(ikc->points_and_descriptors[p].y), &(ikc->points_and_descriptors[p].x), &(ikc->points_and_descriptors[p].descriptor));
   }
   fclose(fp);
+  ikc->begins = (int *)calloc(x.width * x.height, sizeof(int));
+  ikc->ends = (int *)malloc(x.width * x.height * sizeof(int));
+  for (l = 0; l < x.width * x.height; ++l) {
+    ikc->ends[l] = ikc->num_points;
+  }
 }
 
-SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+void try_cache_image(PATTERN x, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL * sm) {
+  int k;
+  if (cached_images[x.example_id] == NULL) {
+    printf("$"); fflush(stdout);
+    cached_images[x.example_id] = (IMAGE_KERNEL_CACHE *)malloc(sm->num_kernels * sizeof(IMAGE_KERNEL_CACHE));
+    IMAGE_KERNEL_CACHE * kernel_caches_for_image = cached_images[x.example_id];
+    for (k = 0; k < sm->num_kernels; ++k) {
+      fill_image_kernel_cache(x, k, &(kernel_caches_for_image[k]), sm);
+    }
+  }
+}
+
+void fill_max_pool(PATTERN x, LATENT_VAR h, int kernel_ind, double * max_pool_segment, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL * sm){
+  int p, d;
+
+  clock_t start_time, finish_time;
+
+  start_time = clock();
+
+  int updated_begin, updated_end; //the "update" really only happens the first time you call this function, but treating things this way won't waste any significant amount of time
+
+  updated_begin = -1;
+  updated_end = 0;
+
+  int current_begin = cached_images[x.example_id][kernel_ind].begins[h.position_x * x.height + h.position_y];
+  int current_end = cached_images[x.example_id][kernel_ind].ends[h.position_x * x.height + h.position_y];
+  if (current_end == 0) { //this means that we know from a previous update that no points are in this bounding box
+    return;
+  }
+  
+
+  for (p = current_begin; p < current_end; ++p) {
+    int point_x = cached_images[x.example_id][kernel_ind].points_and_descriptors[p].x;
+    int point_y = cached_images[x.example_id][kernel_ind].points_and_descriptors[p].y;
+    int descriptor = cached_images[x.example_id][kernel_ind].points_and_descriptors[p].descriptor;
+    if (in_bounding_box(point_x, point_y, h, sm)) {
+      max_pool_segment[descriptor - 1] = 1.0;
+      if (updated_begin == -1) {
+	updated_begin = p;
+      }
+      updated_end = p + 1;
+    }
+  }
+  
+  cached_images[x.example_id][kernel_ind].begins[h.position_x * x.height + h.position_y] = updated_begin;
+  cached_images[x.example_id][kernel_ind].ends[h.position_x * x.height + h.position_y] = updated_end;
+
+  finish_time = clock();
+
+  //printf("fill_max_pool() took %f ticks to iterate through all points (according to clock()).\n", ((double) (finish_time - start_time)));
+
+  double sum = 0.0;
+    for (d = 0; d < sm->kernel_sizes[kernel_ind]; ++d) {
+      sum += max_pool_segment[d];
+    }
+  for (d = 0; d < sm->kernel_sizes[kernel_ind]; ++d) {
+    max_pool_segment[d] /= sum;
+  }
+}
+
+SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Creates the feature vector \Psi(x,y,h) and return a pointer to 
   sparse vector SVECTOR in SVM^light format. The dimension of the 
   feature vector returned has to agree with the dimension in sm->sizePsi. 
 */
+  struct timeval start_time;
+  struct timeval finish_time;
+  gettimeofday(&start_time, NULL);
+
+  try_cache_image(x, cached_images, sm);
+
   SVECTOR * fvec = NULL;
   double * max_pool = (double *)calloc(sm->sizePsi + 1, sizeof(double));
   //binary labelling for now - 1 means there's a car, 0 means there's no car
@@ -193,28 +284,39 @@ SVECTOR *psi(PATTERN x, LABEL y, LATENT_VAR h, STRUCTMODEL *sm, STRUCT_LEARN_PAR
     int k;
     int start_ind = 1;
     for (k = 0; k < sm->num_kernels; ++k) {
-      fill_max_pool(x, h, k, &(max_pool[start_ind]), sm);
+      fill_max_pool(x, h, k, &(max_pool[start_ind]), cached_images, sm);
       start_ind += sm->kernel_sizes[k];
     }
   }
-  return create_svector_n(max_pool, sm->sizePsi, "", 1);
+  
+  gettimeofday(&finish_time, NULL);
+
+  if (y.label) {
+    int million = 1000000;
+    int microseconds = million * (int)(finish_time.tv_sec - start_time.tv_sec) + (int)(finish_time.tv_usec - start_time.tv_usec);
+    //    printf("psi() took %d microseconds.\n", microseconds);
+  }
+  
+  fvec = create_svector_n(max_pool, sm->sizePsi, "", 1);
+  free(max_pool);
+  return fvec;
 }
 
-double compute_w_T_psi(PATTERN *x, int position_x, int position_y, int class, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+double compute_w_T_psi(PATTERN *x, int position_x, int position_y, int class, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
   double w_T_psi;
   LABEL y;
   LATENT_VAR h;
   y.label = class;
   h.position_x = position_x;
   h.position_y = position_y;
-  SVECTOR * psi_vect = psi(*x, y, h, sm, sparm);
+  SVECTOR * psi_vect = psi(*x, y, h, cached_images, sm, sparm);
   w_T_psi = sprod_ns(sm->w, psi_vect);
   free_svector(psi_vect);
   return w_T_psi;
 }
 
 
-void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Makes prediction with input pattern x with weight vector in sm->w,
   i.e., computing argmax_{(y,h)} <w,psi(x,y,h)>. 
@@ -234,7 +336,7 @@ void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
 			for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
-			  score = compute_w_T_psi(&x, h->position_x, h->position_y, y->label, sm, sparm);
+			  score = compute_w_T_psi(&x, h->position_x, h->position_y, y->label, cached_images, sm, sparm);
 				if(score > max_score) {
 					max_score = score;
 					y->label = cur_class;
@@ -242,28 +344,29 @@ void classify_struct_example(PATTERN x, LABEL *y, LATENT_VAR *h, STRUCTMODEL *sm
 					h->position_y = cur_position_y;
 				}
 			}
-
 		}
 	}
 
 	return;
 }
 
-void initialize_most_violated_constraint_search(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, double * max_score, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+void initialize_most_violated_constraint_search(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, double * max_score, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
   hbar->position_x = hstar.position_x;
   hbar->position_y = hstar.position_y;
   ybar->label = y.label;
-  *max_score = compute_w_T_psi(&x, hbar->position_x, hbar->position_y, ybar->label, sm, sparm);
+  *max_score = compute_w_T_psi(&x, hbar->position_x, hbar->position_y, ybar->label, cached_images, sm, sparm);
 }
 
-void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Finds the most violated constraint (loss-augmented inference), i.e.,
   computing argmax_{(ybar,hbar)} [<w,psi(x,ybar,hbar)> + loss(y,ybar,hbar)].
   The output (ybar,hbar) are stored at location pointed by 
   pointers *ybar and *hbar. 
 */
-  
+  printf("width = %d, height = %d\n", x.width, x.height);
+
+  time_t start_time = time(NULL);
 	int width = x.width;
 	int height = x.height;
 	int cur_class, cur_position_x, cur_position_y;
@@ -271,12 +374,12 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 	FILE	*fp;
 	
 	//make explicit the idea that (y, hstar) is what's returned if the constraint is not violated
-	initialize_most_violated_constraint_search(x, hstar, y, ybar, hbar, &max_score, sm, sparm);
+	initialize_most_violated_constraint_search(x, hstar, y, ybar, hbar, &max_score, cached_images, sm, sparm);
 	
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
 			for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
-			        score = compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, sm, sparm);
+			        score = compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, cached_images, sm, sparm);
 				if(cur_class != y.label)
 					score += 1;
 				if(score > max_score) {
@@ -286,16 +389,16 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 					hbar->position_y = cur_position_y;
 				}
 			}
-
 		}
 	}
 
+	time_t finish_time = time(NULL);
+	printf("find_most_violated_constraint_marginrescaling took %d seconds to do %d h values.\n", (int)finish_time - (int)start_time, x.width * x.height);
 	return;
 
 }
 
-void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
-
+void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL y, LABEL *ybar, LATENT_VAR *hbar, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
   int width = x.width;
   int height = x.height;
   int cur_class, cur_position_x, cur_position_y;
@@ -303,13 +406,13 @@ void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL
   FILE    *fp;
 
   //make explicit the idea that (y, hstar) is what's returned if the constraint is not violated
-  initialize_most_violated_constraint_search(x, hstar, y, ybar, hbar, &max_score, sm, sparm);
+  initialize_most_violated_constraint_search(x, hstar, y, ybar, hbar, &max_score, cached_images, sm, sparm);
 
   for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
     for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
       for(cur_class = 0; cur_class < sparm->n_classes; cur_class++) {
 	if (cur_class != y.label) {
-	  score = DELTA + compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, sm, sparm);
+	  score = DELTA + compute_w_T_psi(&x, cur_position_x, cur_position_y, cur_class, cached_images, sm, sparm);
 	  if (score > max_score) {
 	    max_score = score;
 	    ybar->label = cur_class;
@@ -326,11 +429,14 @@ void find_most_violated_constraint_differenty(PATTERN x, LATENT_VAR hstar, LABEL
 }
 
 
-LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
+LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm) {
 /*
   Complete the latent variable h for labeled examples, i.e.,
   computing argmax_{h} <w,psi(x,y,h)>. 
 */
+
+  printf("width = %d, height = %d\n", x.width, x.height);
+  time_t start_time = time(NULL);
 
   LATENT_VAR h;
 
@@ -350,7 +456,7 @@ LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, STRUCTMODEL *sm, STRUCT_LE
 	max_score = -DBL_MAX;
 	for(cur_position_x = 0; cur_position_x < width; cur_position_x++) {
 		for(cur_position_y = 0; cur_position_y < height; cur_position_y++) {
-		        score = compute_w_T_psi(&x, cur_position_x, cur_position_y, y.label, sm, sparm);
+		        score = compute_w_T_psi(&x, cur_position_x, cur_position_y, y.label, cached_images, sm, sparm);
 			if(score > max_score) {
 				max_score = score;
 				h.position_x = cur_position_x;
@@ -358,7 +464,10 @@ LATENT_VAR infer_latent_variables(PATTERN x, LABEL y, STRUCTMODEL *sm, STRUCT_LE
 			}
 		}
 	}
+  
+	time_t finish_time = time(NULL);
 
+	printf("infer_latent_variables() took %d seconds to do %d h values.\n", (int)finish_time - (int)start_time, x.width * x.height);
 
   return(h); 
 }
