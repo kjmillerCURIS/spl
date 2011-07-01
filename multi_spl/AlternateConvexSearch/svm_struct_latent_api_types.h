@@ -36,9 +36,8 @@ typedef struct point_and_descriptor {
 typedef struct image_kernel_cache {
   int num_points;
   POINT_AND_DESCRIPTOR * points_and_descriptors;
-  int num_unique_x_vals;
-  POINT_AND_DESCRIPTOR * x_begin_pads;
-  int * x_begin_indices;
+  int * begins;
+  int * ends;
 } IMAGE_KERNEL_CACHE;
 
 typedef struct label {

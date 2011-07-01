@@ -1113,8 +1113,8 @@ void my_read_input_parameters(int argc, char *argv[], char *trainfile, char* mod
   /* set default */
   sm->bbox_width = 50;
   sm->bbox_height = 50;
-  sm->bbox_step_x = 1;
-  sm->bbox_step_y = 1;
+  sm->bbox_step_x = 10;
+  sm->bbox_step_y = 10;
   learn_parm->maxiter=20000;
   learn_parm->svm_maxqpsize=100;
   learn_parm->svm_c=100.0;

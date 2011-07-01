@@ -187,56 +187,56 @@ FILE * open_kernelized_image_file(PATTERN x, int kernel_ind, STRUCTMODEL * sm) {
   return fopen(file_path, "r");
 }
 
-int point_cmp(const void * a, const void * b) {
-  POINT_AND_DESCRIPTOR * pad_a = (POINT_AND_DESCRIPTOR *)a;
-  POINT_AND_DESCRIPTOR * pad_b = (POINT_AND_DESCRIPTOR *)b;
-  if (pad_a->x != pad_b->x) {
-    if (pad_a->x > pad_b->x) {
-      return 1;
-    }
-    if (pad_a->x < pad_b->x) {
-      return -1;
-    }
-  } else if (pad_a->y != pad_b->y) {
-    if (pad_a->y > pad_b->y) {
-      return 1;
-    }
-    if (pad_a->y < pad_b->y) {
-      return -1;
-    }
-  } else if (pad_a->descriptor != pad_b->descriptor) { 
+//int point_cmp(const void * a, const void * b) {
+//  POINT_AND_DESCRIPTOR * pad_a = (POINT_AND_DESCRIPTOR *)a;
+//  POINT_AND_DESCRIPTOR * pad_b = (POINT_AND_DESCRIPTOR *)b;
+//  if (pad_a->x != pad_b->x) {
+//    if (pad_a->x > pad_b->x) {
+//      return 1;
+//    }
+//    if (pad_a->x < pad_b->x) {
+//      return -1;
+//    }
+//  } else if (pad_a->y != pad_b->y) {
+//    if (pad_a->y > pad_b->y) {
+//      return 1;
+//    }
+//    if (pad_a->y < pad_b->y) {
+//      return -1;
+//    }
+//  } else if (pad_a->descriptor != pad_b->descriptor) { 
 //I don't actually care how the descriptors are ordered, but I'm too lazy to figure out whether qsort() will think a and b are interchangeable if point_cmp returns 0 - much easier to just take the paranoid approach and only return 0 if they're actually interchangeable!
-    if (pad_a->descriptor > pad_b->descriptor) {
-      return 1;
-    }
-    if (pad_a->descriptor < pad_b->descriptor) {
-      return -1;
-    }
-  }
-  return 0;
-}
+//    if (pad_a->descriptor > pad_b->descriptor) {
+//      return 1;
+//    }
+//    if (pad_a->descriptor < pad_b->descriptor) {
+//      return -1;
+//    }
+//  }
+//  return 0;
+//}
 
-void store_x_begins(IMAGE_KERNEL_CACHE * ikc) {
-  int p, q;
-  int * temp_index_list = (int *)malloc(ikc->num_points * sizeof(int));
-  int cur_num_x_vals = 0;
-  int cur_x_val = -1;
-  for (p = 0;  p < ikc->num_points; ++p) {
-    if (ikc->points_and_descriptors[p].x != cur_x_val) {
-      temp_index_list[cur_num_x_vals] = p;
-      cur_num_x_vals++;
-      cur_x_val = ikc->points_and_descriptors[p].x
-	}
-  }
-  ikc->num_unique_x_vals = cur_num_x_vals;
-  ikc->x_begin_indices = (int *)malloc(cur_num_x_vals * sizeof(int));
-  ikc->x_begin_pads = (POINT_AND_DESCRIPTOR *)malloc(cur_num_x_vals * sizeof(POINT_AND_DESCRIPTOR));
-  for (q = 0; q < cur_num_x_vals; ++q) {
-    ikc->x_begin_indices[q] = temp_index_list[q];
-    ikc->x_begin_pads[q] = ikc->points_and_descriptors[temp_index_list[q]];
-  }
-  free(temp_index_list);
-}
+//void store_x_begins(IMAGE_KERNEL_CACHE * ikc) {
+//  int p, q;
+//  int * temp_index_list = (int *)malloc(ikc->num_points * sizeof(int));
+//  int cur_num_x_vals = 0;
+//  int cur_x_val = -1;
+//  for (p = 0;  p < ikc->num_points; ++p) {
+//    if (ikc->points_and_descriptors[p].x != cur_x_val) {
+//      temp_index_list[cur_num_x_vals] = p;
+//      cur_num_x_vals++;
+//     cur_x_val = ikc->points_and_descriptors[p].x
+//	}
+//  }
+//  ikc->num_unique_x_vals = cur_num_x_vals;
+//  ikc->x_begin_indices = (int *)malloc(cur_num_x_vals * sizeof(int));
+//  ikc->x_begin_pads = (POINT_AND_DESCRIPTOR *)malloc(cur_num_x_vals * sizeof(POINT_AND_DESCRIPTOR));
+//  for (q = 0; q < cur_num_x_vals; ++q) {
+//   ikc->x_begin_indices[q] = temp_index_list[q];
+//    ikc->x_begin_pads[q] = ikc->points_and_descriptors[temp_index_list[q]];
+//  }
+//  free(temp_index_list);
+//}
 
 void fill_image_kernel_cache(PATTERN x, int kernel_ind, IMAGE_KERNEL_CACHE * ikc, STRUCTMODEL * sm) {
   int p, l;
@@ -249,8 +249,13 @@ void fill_image_kernel_cache(PATTERN x, int kernel_ind, IMAGE_KERNEL_CACHE * ikc
     fscanf(fp, "(%d,%d):%d\n", &(ikc->points_and_descriptors[p].y), &(ikc->points_and_descriptors[p].x), &(ikc->points_and_descriptors[p].descriptor));
   }
   fclose(fp);
-  qsort(ikc->points_and_descriptors, ikc->num_points, sizeof(POINT_AND_DESCRIPTOR), point_cmp);
-  store_x_begins(ikc);
+  ikc->begins = (int *)calloc(x.width * x.height, sizeof(int));
+  ikc->ends = (int *)malloc(x.width * x.height * sizeof(int));
+  for (l = 0; l < x.width * x.height; ++l) {
+    ikc->ends[l] = ikc->num_points;
+  }
+  //  qsort(ikc->points_and_descriptors, ikc->num_points, sizeof(POINT_AND_DESCRIPTOR), point_cmp);
+  // store_x_begins(ikc);
 }
 
 void try_cache_image(PATTERN x, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL * sm) {
@@ -412,9 +417,14 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
   The output (ybar,hbar) are stored at location pointed by 
   pointers *ybar and *hbar. 
 */
-  printf("width = %d, height = %d\n", x.width, x.height);
+//  printf("width = %d, height = %d\n", x.width, x.height);
 
-  time_t start_time = time(NULL);
+//  time_t start_time = time(NULL);
+
+  struct timeval start_time;
+  struct timeval finish_time;
+  gettimeofday(&start_time, NULL);
+
 	int width = x.width;
 	int height = x.height;
 	int cur_class, cur_position_x, cur_position_y;
@@ -440,8 +450,16 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 		}
 	}
 
-	time_t finish_time = time(NULL);
-	printf("find_most_violated_constraint_marginrescaling took %d seconds to do %d h values.\n", (int)finish_time - (int)start_time, x.width * x.height);
+	gettimeofday(&finish_time, NULL);
+
+	if (y.label) {
+	  int million = 1000000;
+	  int microseconds = million * (int)(finish_time.tv_sec - start_time.tv_sec) + (int)(finish_time.tv_usec - start_time.tv_usec);
+	      printf("find_most_violated_constraint_marginrescaling() took %f milliseconds.\n", microseconds / 1000.0);
+	}
+
+	//time_t finish_time = time(NULL);
+	//printf("find_most_violated_constraint_marginrescaling took %d seconds to do %d h values.\n", (int)finish_time - (int)start_time, x.width * x.height);
 	return;
 
 }
