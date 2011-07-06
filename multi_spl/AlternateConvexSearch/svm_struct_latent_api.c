@@ -455,7 +455,7 @@ void find_most_violated_constraint_marginrescaling(PATTERN x, LATENT_VAR hstar, 
 	if (y.label) {
 	  int million = 1000000;
 	  int microseconds = million * (int)(finish_time.tv_sec - start_time.tv_sec) + (int)(finish_time.tv_usec - start_time.tv_usec);
-	      printf("find_most_violated_constraint_marginrescaling() took %f milliseconds.\n", microseconds / 1000.0);
+	 //     printf("find _most_violated_constraint_marginrescaling() took %f milliseconds.\n", microseconds / 1000.0);
 	}
 
 	//time_t finish_time = time(NULL);

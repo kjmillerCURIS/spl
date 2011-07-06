@@ -15,17 +15,23 @@ MSKLINKFLAGS= -lmosek64 -lpthread -lm
 MSKLIBPATH= /afs/cs.stanford.edu/u/pawan/Project/mosek/6/tools/platform/linux64x86/bin/
 SFMTPATH= ./SFMT-src-1.3.3
 
-all: svm_bbox_learn svm_bbox_classify
+all: svm_bbox_learn svm_bbox_classify svm_bbox_fmvc
 
 clean: 
 	rm -f *.o
 	rm -f svm_latent_learn svm_latent_classify
+
+#svm_bbox_fmvc: svm_struct_latent_fmvc.o svm_common.o mosek_qp_optimize.o svm_struct_latent_api.o SFMT.o
+#	$(LD) $(LDFLAGS) svm_struct_latent_fmvc.o svm_common.o mosek_qp_optimize.o SFMT.o svm_struct_latent_api.o -o svm_bbox_fmvc $(LIBS) -L $(MSKLIBPATH) $(MSKLINKFLAGS)
 
 svm_bbox_learn: svm_struct_latent_spl.o svm_common.o mosek_qp_optimize.o svm_struct_latent_api.o SFMT.o
 	$(LD) $(LDFLAGS) svm_struct_latent_spl.o svm_common.o mosek_qp_optimize.o SFMT.o svm_struct_latent_api.o -o svm_bbox_learn $(LIBS) -L $(MSKLIBPATH) $(MSKLINKFLAGS)
 
 svm_bbox_classify: svm_struct_latent_classify.o svm_common.o svm_struct_latent_api.o SFMT.o
 	$(LD) $(LDFLAGS) svm_struct_latent_classify.o svm_common.o SFMT.o svm_struct_latent_api.o -o svm_bbox_classify $(LIBS)
+
+svm_struct_latent_fmvc.o: svm_struct_latent_fmvc.c
+    $(CC) -std=c99 -c $(CFLAGS) svm_struct_latent_fmvc.c -o svm_struct_latent_fmvc.o
 
 svm_struct_latent_spl.o: svm_struct_latent_spl.c
 	$(CC) -std=c99 -c $(CFLAGS) svm_struct_latent_spl.c -o svm_struct_latent_spl.o
@@ -38,6 +44,7 @@ mosek_qp_optimize.o: mosek_qp_optimize.c
 
 svm_struct_latent_api.o: svm_struct_latent_api.c svm_struct_latent_api_types.h
 	$(CC) -c $(CFLAGS) svm_struct_latent_api.c -o svm_struct_latent_api.o
+
 
 svm_struct_latent_classify.o: svm_struct_latent_classify.c
 	$(CC) -c $(CFLAGS) svm_struct_latent_classify.c -o svm_struct_latent_classify.o

@@ -57,7 +57,7 @@ typedef struct latent_var {
     Type definition for latent variable h
   */
   int position_x; /* starting position of object */
-	int position_y;
+  int position_y;
 } LATENT_VAR;
 
 typedef struct example {
@@ -124,3 +124,17 @@ typedef struct spl_variable_struct {
   int * valid_kernel_indices;
   int ** valid_kernel_indices_per_example; //has an array for each example (including those with no valid kernels)
 } SPL_VAR_STRUCT;
+
+typedef struct fmvc_job {
+    int m;
+    int* curr_task;
+    int* completed_tasks;
+    pthread_mutex_t* curr_lock;
+    pthread_mutex_t* completed_lock;
+    EXAMPLE* ex_list;
+    LABEL* ybar_list;
+    LATENT_VAR* hbar_list;
+    IMAGE_KERNEL_CACHE** cached_images;
+    STRUCTMODEL* sm;
+    STRUCT_LEARN_PARM* sparm;
+} fmvc_job;

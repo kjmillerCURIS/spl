@@ -17,11 +17,15 @@
 /*                                                                      */
 /************************************************************************/
 
+#include <unistd.h>
+#include <pthread.h>
+
 #include <stdio.h>
 #include <assert.h>
 #include <float.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 #include <math.h>
 #include "svm_struct_latent_api.h"
 #include "./svm_light/svm_learn.h"
@@ -169,6 +173,87 @@ int compar(const void *a, const void *b)
   return 0;
 }
 
+void* handle_fmvc(void* inputa)
+{
+    fmvc_job* background  = (fmvc_job*) inputa;
+
+    int more_work_to_do = 1;
+    while(more_work_to_do)
+    {
+       pthread_mutex_lock(background->curr_lock);
+       int curr_task = *(background->curr_task);
+        *(background->curr_task)= curr_task + 1;
+        pthread_mutex_unlock(background->curr_lock);
+
+        if(curr_task>=background->m) //we're done
+        {
+            more_work_to_do = 0;
+        }
+        else  //have to do the job
+        {
+            find_most_violated_constraint(&(background->ex_list[curr_task]), 
+                &(background->ybar_list[curr_task]), &(background->hbar_list[curr_task]),
+                 background->cached_images, background->sm, background->sparm);
+             pthread_mutex_lock(background->completed_lock);
+             int completed_tasks = *(background->completed_tasks);
+             *(background->completed_tasks)= completed_tasks + 1;
+             pthread_mutex_unlock(background->completed_lock);
+        }
+    }
+   pthread_exit(0); 
+}
+
+void find_most_violated_constraint_parallel(int m,EXAMPLE* ex_list, LABEL* ybar_list, LATENT_VAR* hbar_list, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm)
+{
+    int num_threads=2;
+    int curr_task = 0;
+    int completed_tasks = 0;
+
+    pthread_mutex_t completed_lock;
+    pthread_mutex_init(&completed_lock, NULL);
+    pthread_mutex_t curr_lock;
+    pthread_mutex_init(&curr_lock, NULL);
+
+    fmvc_job background;
+    background.m = m;
+    background.curr_task = &curr_task;
+    background.completed_tasks = &completed_tasks;
+    background.curr_lock = &curr_lock;
+    background.completed_lock = &completed_lock;
+    background.ex_list = ex_list;
+    background.ybar_list = ybar_list;
+    background.hbar_list = hbar_list;
+    background.cached_images = cached_images;
+    background.sm = sm;
+    background.sparm = sparm;
+    int i;
+    for(i=0; i < num_threads; i ++)
+    {
+        pthread_t mythread;
+        pthread_create(&mythread, NULL, handle_fmvc, &background);
+//        fire_off_job();
+    }
+
+    int more_work_to_do = 1;
+    while(more_work_to_do)
+    {  
+//        sleep(1);
+        usleep(1000); //sleep for a ms
+        pthread_mutex_lock(&completed_lock);
+        int num_completed = completed_tasks;
+ //       printf("num completed%d\n", num_completed);
+        pthread_mutex_unlock(&completed_lock);
+        if (num_completed >= m)
+        {
+            more_work_to_do = 0;
+        } 
+    }
+ 
+    /*for(i=0; i <m ; i++)
+    {
+        find_most_violated_constraint(&(ex_list[i]), &ybar_list[i], &hbar_list[i], cached_images, sm, sparm);
+    }*/
+}
 
 SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long m, IMAGE_KERNEL_CACHE ** cached_images, STRUCTMODEL *sm, STRUCT_LEARN_PARM *sparm, int *valid_examples) {
 
@@ -178,7 +263,7 @@ SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long
   LATENT_VAR hbar;
   double lossval;
   double *new_constraint;
-	long valid_count = 0;
+  long valid_count = 0;
 
   long l,k;
   SVECTOR *fvec;
@@ -194,13 +279,31 @@ SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long
 		}
 	}
 
+  //RAFI find_all_most_violated_constraints
+  LABEL*       ybar_list = malloc(m*sizeof(LABEL));
+  LATENT_VAR* hbar_list = malloc(m*sizeof(LATENT_VAR));
+
+  struct timeval start_time;
+  struct timeval finish_time;
+  gettimeofday(&start_time, NULL);
+  find_most_violated_constraint_parallel(m,ex, ybar_list, hbar_list, cached_images, sm, sparm);
+  gettimeofday(&finish_time, NULL);
+  int microseconds = 1e6 * (int)(finish_time.tv_sec - start_time.tv_sec) + (int)(finish_time.tv_usec - start_time.tv_usec);
+
+  printf("doing all the fmvc took %d\n", microseconds/1000);
+
   for (i=0;i<m;i++) {
 
 		if (!valid_examples[i]) {
 			continue;
 		}
 
-     find_most_violated_constraint(&(ex[i]), &ybar, &hbar, cached_images, sm, sparm);
+	//RAFI kill this
+     //find_most_violated_constraint(&(ex[i]), &(ybar_list[i]), &(hbar_list[i]), cached_images, sm, sparm);
+
+	ybar = ybar_list[i];
+	hbar = hbar_list[i];
+
     /* get difference vector */
     fy = copy_svector(fycache[i]);
     fybar = psi(ex[i].x,ybar,hbar,cached_images,sm,sparm);
@@ -227,6 +330,9 @@ SVECTOR* find_cutting_plane(EXAMPLE *ex, SVECTOR **fycache, double *margin, long
     //*margin+=lossval*ex[i].x.example_cost/m;
     *margin+=lossval*ex[i].x.example_cost/valid_count;
   }
+
+  free(ybar_list);
+  free(hbar_list);
 
   /* compact the linear representation */
   new_constraint = add_list_nn(lhs, sm->sizePsi);
